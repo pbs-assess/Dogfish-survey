@@ -1,0 +1,739 @@
+---
+title: "DogfishSurveySummary"
+author: "davidson"
+date: "7/17/2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## DOG comparison wih HBLL survey
+
+Goal: 
+Eliminate the dogfish fall survey and generate an dogfish index using survey data from the HBLL Inside survey. 
+
+However, 
+- [1]	HBLL survey runs in the summer and dogfish have seasonal movements and there is a concern we are not capturing the larger females. 
+- [2]	The HBLL survey has a shallower depth strata than the dogfish survey.
+- [3]	The HBLL survey uses different bait and hooks. 
+- [4]	The dogfish survey was a fixed station with 4 depth strata. 
+
+Therefore, 
+- [1]	Continue Dogfish (fall) survey until a full analytical comparison of the two time series is completed. 
+- [2]	Complete seasonal and gear/bait comparative work. 
+
+Here I ask:
+- [1] Is the size distribution between the HBLL and DOG (fall Dogfish survey) different?
+- [3] Is the relative index of abundance estimated to be the same across the two surveys?
+- [2] Is the decline of maturity classes estimated to be similar across the two surveys?
+
+Questions to address:
+- [1]	Do extra depths need to be added to the HBLL survey to capture an sex/length composition to create an index? Evaluate data as surveys are completed to understand the catch size and sex distribution. Seems that dogfish are shallower in summer and it’s possible that we are capturing the same size and sex distribution at shallower depths. However, we only have data from three sites and the results are variable. Dogfish move deeper in the later months. Also potential for differences in the catchability in individuals between seasons?
+- [2]	Are there differences in the catchability of dogfish between the HBLL and Dogfish surveys owing to bait/gear)? 
+- [3]	What is the calibration coefficient between the gear types? seasons?
+
+
+```{r library}
+library(gfdata)
+library(gfplot)
+library(tidyverse)
+library(here)
+library(sdmTMB)
+```
+
+There are four DOG surveys in gfbio: `x$SURVEY_SERIES_DESC[x$SURVEY_SERIES_ID %in% c(48, 76, 92, 93)]`. These surveys include the two surveys that ran in 1986 and 1989 with J-hooks (ssid = 92); the comparison surveys completed in 2004, 2019, 2022 (ssid = 48), and the surveys completed with circle hooks in 2005, 2008, 2011, 2014, 2019.   
+
+However, `get_survey_sets` only pulls data from the 2019 survey that includes the DOG survey and the HBLL comparative work `unique(sets$year); unique(sets$survey_series_desc)`). 
+
+Details of the comparative surveys. 2019 HBLL with DOG circle hooks run at x stations. 2022 comparative work included HBLL and DOG circle hooks, same line, run at x sites. 2004 work was completed during the DOG survey and included fishing sits twice, once with J-hooks and once with circle hooks (ref:). 
+
+```{r data, eval = TRUE}
+x <- get_ssids()
+x$SURVEY_SERIES_DESC[x$SURVEY_SERIES_ID %in% c(48, 76, 92, 93)]
+#sets <- get_survey_sets(species = "north pacific spiny dogfish", ssid = c(48, 76, 92, 93))
+#saveRDS(sets,  "C:/Dogfish surveys 2022/output/dogfish_sets.rds")
+sets <- readRDS("C:/Dogfish surveys 2022/output/dogfish_sets.rds")
+
+```
+
+
+To access the data, I used a sql command and include those surveys completed with circle hooks `unique(sets$survey_series_desc)` in years `unique(sets$years)`. A calibration survey between the J-hook and circle hooks was completed in 2004. Calibrating those catches to extend the timeseries will be completed shortly. 
+```{r sqlfromsean}
+
+#https://github.com/pbs-assess/yelloweye-inside/blob/master/dogfish/dogfish%20survey%20sets%20data.R
+
+fe <- gfdata::run_sql("GFBioSQL", "SELECT
+  S.SURVEY_SERIES_ID,
+  SURVEY_SERIES_DESC,
+  S.SURVEY_ID,
+  SURVEY_DESC,
+  YEAR(FE_BEGIN_RETRIEVAL_TIME) YEAR,
+  FE.FISHING_EVENT_ID,
+  FE_START_LATTITUDE_DEGREE + FE_START_LATTITUDE_MINUTE / 60 AS LATITUDE,
+  -(FE_START_LONGITUDE_DEGREE + FE_START_LONGITUDE_MINUTE / 60) AS LONGITUDE,
+  FE.GROUPING_CODE,
+  GROUPING_DESC,
+  GROUPING_DEPTH_ID,
+  FE_END_DEPLOYMENT_TIME,
+  FE.FE_FISHING_GROUND_COMMENT, 
+  FE_BEGIN_RETRIEVAL_TIME,
+  FE_BEGINNING_BOTTOM_DEPTH AS DEPTH_M,
+  FE_BOTTOM_WATER_TEMPERATURE,
+  TR.TRIP_START_DATE,
+  TR.TRIP_END_DATE,
+  HOOK_CODE,
+  SKATE_COUNT,
+  LGLSP_HOOK_COUNT,
+  0.0024384 * 0.009144 * LGLSP_HOOK_COUNT AS AREA_SWEPT_KM2 --0.024384 = 8 ft hook spacing (to calculate line length with hook count); 0.009144 = 2*gangion length (= area width)
+  FROM FISHING_EVENT FE
+  INNER JOIN TRIP_SURVEY TS ON FE.TRIP_ID = TS.TRIP_ID
+  INNER JOIN TRIP TR ON FE.TRIP_ID = TR.TRIP_ID
+  INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
+  INNER JOIN SURVEY_SERIES SS ON SS.SURVEY_SERIES_ID = S.SURVEY_SERIES_ID
+  INNER JOIN LONGLINE_SPECS LLSP ON LLSP.FISHING_EVENT_ID = FE.FISHING_EVENT_ID
+  INNER JOIN GROUPING G ON G.GROUPING_CODE = FE.GROUPING_CODE
+  WHERE S.SURVEY_SERIES_ID IN (76)")
+names(fe) <- tolower(names(fe))
+
+ye_catch <- gfdata::run_sql("GFBioSQL", "SELECT
+  FEC.FISHING_EVENT_ID,
+  SUM(CATCH_COUNT) YE_COUNT
+  FROM FISHING_EVENT_CATCH FEC
+  INNER JOIN CATCH C ON C.CATCH_ID = FEC.CATCH_ID
+  INNER JOIN TRIP_SURVEY TS ON TS.TRIP_ID = FEC.TRIP_ID
+  INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
+  WHERE C.SPECIES_CODE IN ('442') AND SURVEY_SERIES_ID = 76
+  GROUP BY FEC.TRIP_ID,
+  FEC.FISHING_EVENT_ID,
+  C.SPECIES_CODE
+  ORDER BY FEC.FISHING_EVENT_ID")
+names(ye_catch) <- tolower(names(ye_catch))
+
+dogfish_catch <- gfdata::run_sql("GFBioSQL", "SELECT
+  FEC.FISHING_EVENT_ID,
+  SUM(CATCH_COUNT) DOGFISH_COUNT
+  FROM FISHING_EVENT_CATCH FEC
+  INNER JOIN CATCH C ON C.CATCH_ID = FEC.CATCH_ID
+  INNER JOIN TRIP_SURVEY TS ON TS.TRIP_ID = FEC.TRIP_ID
+  INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
+  WHERE C.SPECIES_CODE IN ('044') AND SURVEY_SERIES_ID = 76
+  GROUP BY FEC.TRIP_ID,
+  FEC.FISHING_EVENT_ID,
+  C.SPECIES_CODE
+  ORDER BY FEC.FISHING_EVENT_ID")
+names(dogfish_catch) <- tolower(names(dogfish_catch))
+
+d <- dplyr::left_join(fe, ye_catch)
+d <- dplyr::left_join(d, dogfish_catch, by ="fishing_event_id")
+
+saveRDS(d, "C:/Dogfish surveys 2022/output/dogfishsql_sets.rds")
+```
+
+Erase?
+```{r sql, eval = FALSE}
+
+
+# WHERE SURVEY_SERIES SS S.SURVEY_SERIES_NAME = SOG Dogfish Longline
+# Activity_code from aCTIVITY == 39
+# WHERE S.SURVEY_ID in (468,563, 564, 499, 501, 565, 566, 502, 503, 567, 568, 453)
+
+#return hook info and I can sum in R to get hook count. 
+test_hookyield <- gfdata::run_sql("GFBioSQL", "SELECT
+  S.SURVEY_ID, S.SURVEY_SERIES_ID, F.FISHING_EVENT_ID,
+  F.FE_MAJOR_LEVEL_ID, F.FE_PARENT_EVENT_ID,
+  F.FE_SUB_LEVEL_ID, F.FE_MINOR_LEVEL_ID,
+	LLSP.LGLSP_HOOKS_SET_COUNT, 
+	LLSP.LGLSP_HOOK_COUNT, 
+	LLSP.SKATE_COUNT
+FROM FISHING_EVENT F
+INNER JOIN TRIP_SURVEY TS ON TS.TRIP_ID = F.TRIP_ID
+LEFT JOIN LONGLINE_SPECS LLSP ON LLSP.FISHING_EVENT_ID = F.FISHING_EVENT_ID
+INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
+  WHERE S.SURVEY_SERIES_ID IN (48, 76, 92, 93)
+ORDER BY FE_SUB_LEVEL_ID, FE_MINOR_LEVEL_ID
+")
+
+test <- test_hookyield |> 
+ filter(SURVEY_SERIES_ID == 76)
+
+dogsurvey <- gfdata::run_sql("GFBioSQL", "SELECT
+  FEC.FISHING_EVENT_ID, C.SPECIES_CODE,
+  SUM(CATCH_COUNT) COUNT
+  FROM FISHING_EVENT_CATCH FEC
+  INNER JOIN CATCH C ON C.CATCH_ID = FEC.CATCH_ID
+  INNER JOIN TRIP_SURVEY TS ON TS.TRIP_ID = FEC.TRIP_ID
+  INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
+  WHERE S.SURVEY_SERIES_ID IN (48, 76, 92, 93)
+  GROUP BY FEC.TRIP_ID,
+  FEC.FISHING_EVENT_ID,
+  C.SPECIES_CODE
+  ORDER BY FEC.FISHING_EVENT_ID")
+names(dogsurvey) <- tolower(names(dogsurvey))
+length(unique(dogsurvey$fishing_event_id))
+
+dogcomp <- gfdata::run_sql("GFBioSQL", "SELECT
+  S.SURVEY_SERIES_ID,
+  LLSP.HOOK_CODE,
+  FE_MAJOR_LEVEL_ID,
+  SURVEY_SERIES_DESC,  FE.FE_MISC_COMMENT, FE.FE_FISHING_GROUND_COMMENT,
+  S.SURVEY_ID,
+  FE_SUB_LEVEL_ID,
+  SURVEY_DESC,
+  FE_PARENT_EVENT_ID,
+  YEAR(FE_BEGIN_RETRIEVAL_TIME) YEAR,
+  FE.FISHING_EVENT_ID,
+  FE_START_LATTITUDE_DEGREE + FE_START_LATTITUDE_MINUTE / 60 AS LATITUDE,
+  -(FE_START_LONGITUDE_DEGREE + FE_START_LONGITUDE_MINUTE / 60) AS LONGITUDE,
+  FE_END_DEPLOYMENT_TIME,
+  FE_BEGIN_RETRIEVAL_TIME,
+  FE.GROUPING_CODE,
+  GROUPING_DESC,
+  GROUPING_DEPTH_ID,
+  TR.TRIP_START_DATE,
+  TR.TRIP_END_DATE,
+  FE_BEGINNING_BOTTOM_DEPTH AS DEPTH_M,
+  FE.TRIP_ID
+  FROM FISHING_EVENT FE
+  LEFT JOIN LONGLINE_SPECS LLSP ON LLSP.FISHING_EVENT_ID = FE.FISHING_EVENT_ID
+  INNER JOIN TRIP_SURVEY TS ON FE.TRIP_ID = TS.TRIP_ID
+  INNER JOIN TRIP TR ON FE.TRIP_ID = TR.TRIP_ID
+  INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
+  INNER JOIN SURVEY_SERIES SS ON SS.SURVEY_SERIES_ID = S.SURVEY_SERIES_ID
+  INNER JOIN GROUPING G ON G.GROUPING_CODE = FE.GROUPING_CODE
+  WHERE S.SURVEY_SERIES_ID IN (48, 76, 92, 93)")
+#  WHERE S.SURVEY_ID in (468,563, 564, 499, 501, 565, 566, 502, 503, 567, 568, 453) ")
+names(dogcomp) <- tolower(names(dogcomp))
+length(unique(dogcomp$fishing_event_id))
+
+x <- dogcomp %>%
+  group_by(fe_fishing_ground_comment, year, grouping_desc, fishing_event_id) %>%
+  tally() %>%
+  drop_na(fe_fishing_ground_comment)
+
+y <- filter(dogsurvey, species_code == "044")
+length(unique(y$fishing_event_id))
+
+dogcomp %>%
+  tally(is.na(fe_fishing_ground_comment) == TRUE)
+
+dog <- dogcomp %>%
+  #drop_na(fe_fishing_ground_comment) %>%
+  dplyr::inner_join(y)
+anti <- y %>% dplyr::anti_join(dogcomp) # 45 dont match cause it is aggregated by skate (j hook and circle hook combined) and so fishing event id, and disaggregated by j-hook and circle hook
+
+test <- filter(dog, survey_series_id == 76) # no 2022, 2004, 2019 comparison work
+unique(test$survey_series_desc)
+unique(sort(test$year))
+
+test <- filter(dog, survey_series_id == 93) # no 1986, 1989,2004,  2022
+unique(test$survey_series_desc)
+unique(sort(test$year))
+
+test <- filter(dog, survey_series_id == 92) # only 1986, 1989
+unique(test$survey_series_desc)
+unique(sort(test$year))
+
+test <- filter(dog, survey_series_id == 48) # only 2004, 2019, 2022
+unique(test$survey_series_desc)
+unique(sort(test$year))
+
+test <- filter(dog, year == 2022)
+unique(test$survey_series_desc)
+unique(sort(test$year))
+
+saveRDS(dog, "C:/Dogfish surveys 2022/output/dogfishsql_sets.rds")
+
+```
+
+
+Plots of the raw data from sql command. 
+```{r}
+d <- readRDS("C:/Dogfish surveys 2022/output/dogfishsql_sets.rds")
+
+unique(d$survey_series_id)
+sort(unique(d$year))
+
+test <- filter(d, survey_series_id == 76 )# no 1986, 1989,2004,  2022
+unique(test$survey_series_desc)
+unique(sort(test$year))
+
+ggplot(dog, aes(grouping_desc, dogfish_count)) +
+  geom_boxplot() +
+  facet_wrap(~year)
+
+```
+
+Note: hooks fished is variable across surveys. 
+
+Here, I check the dates, survey timing, survey duration. etc including on surveys completed with circle hooks `unique(sort(dog$year))`. 
+
+```{r cleandata}
+unique(dog$survey_series_desc)
+unique(sort(dog$year))
+dog <- filter(d, year > 2000)
+dog$deployment_time <- as.POSIXct(dog$fe_begin_retrieval_time) #this is from the other database that I collated
+dog2 <- dog %>%
+  mutate(dmy = lubridate::ymd_hms(fe_begin_retrieval_time)) %>%
+  mutate(julian = lubridate::yday(dmy)) %>%
+  mutate(trip_start_julian = lubridate::yday(trip_start_date)) # see the 2008 dot that is 315? this is wrong
+
+
+# there is a mistake in the database where the month and days are flipped
+# I am changing it here but I have told Maria so may not needs to change in the future
+# Maria changed it
+# x <- lubridate::yday(as.POSIXct("2011-10-11", format = "%Y-%m-%d"))
+
+# dog2$julian <-
+#   ifelse(dog2$trip_id == 82551 & dog2$julian == 315, lubridate::yday(as.POSIXct("2011-10-11", format = "%Y-%m-%d")),
+#     lubridate::yday(dog2$dmy)
+#   )
+
+ggplot(dog2, aes(as.factor(year), julian)) +
+  geom_boxplot() # + facet_wrap(~ )
+
+# how long is the survey
+dog2$julianstart <- lubridate::yday(dog2$trip_start_date)
+dog2$julianend <- lubridate::yday(dog2$trip_end_date)
+dog2$duration <- dog2$julianend - dog2$julianstart
+#ggplot(dog2, aes(as.factor(year), duration)) +
+#  geom_point(size = 2)
+
+```
+
+Plot of DOG survey and date completed and duration. There is a lot of variability in both. 
+```{r}
+
+ggplot(dog2, aes(as.factor(year), julian)) +
+  geom_boxplot() # + facet_wrap(~ )
+
+ggplot(dog2, aes(as.factor(year), duration)) +
+  geom_point(size = 2)
+
+```
+
+The DOG survey is a fixed station survey with 4 depth strata (five depth strata in 1986 and 1989). The locations of the 10-14 stations is stored in the comments. Here, I standardize names, spelling, and correct some of the issues with different station names and lat and longs. 
+```{r}
+# fishing ground names
+ggplot(dog2, aes(grouping_desc, dogfish_count)) +
+  geom_boxplot() +
+  facet_wrap(~fe_fishing_ground_comment)
+
+# fishing ground
+ggplot(
+  dog2,
+  aes(longitude, latitude, colour = fe_fishing_ground_comment)
+) +
+  geom_point()
+
+# change names
+# noticed a mistake, fe_fishing_ground_comment for 2019 nad julian date 283 says Malaspina but should be Epson Point
+# see here:
+ggplot(
+  filter(dog2, year == 2019 & fe_fishing_ground_comment == "Malaspina Strait"),
+  aes(longitude, latitude, colour = julian)
+) +
+  geom_point()
+dog2$fe_fishing_ground_comment[c(dog2$year == 2019 & dog2$fe_fishing_ground_comment == "Malaspina Strait" & dog2$julian == 283)] <- "Epsom Point"
+
+ggplot(
+  filter(dog2, year == 2019 & fe_fishing_ground_comment == "Malaspina Strait"),
+  aes(longitude, latitude, colour = fe_fishing_ground_comment)
+) +
+  geom_point()
+
+# fishing ground
+ggplot(
+  filter(dog2, longitude > -123.8),
+  aes(longitude, latitude, colour = fe_fishing_ground_comment)
+) +
+  geom_text(aes(label = fe_fishing_ground_comment)) +
+  geom_point()
+
+# i am going to take out east valdes for now as its confused with both
+dog2 <- filter(dog2, fe_fishing_ground_comment != "E. Valdes")
+
+vec <- dog2$fe_fishing_ground_comment
+dog2$location <- recode(vec,
+  "Espon Point" = "Epsom Point",
+  "Epson Point" = "Epsom Point",
+  "SoG Dogfish Site Epsom Point" = "Epsom Point",
+  "West Cape Lazo" = "Cape Lazo",
+  "White Isle - Halibut Bank" = "Halibut Banks",
+  "White Isle" = "Halibut Banks",
+  "Halibut Bank" = "Halibut Banks",
+  "While Isle - Halibut Bank" = "Halibut Banks",
+  "Polier Pass" = "Porlier Pass",
+  "Dettwiller Point Galiano Island North." = "Porlier Pass",
+  "Dettwiller Point - Galiano Island North side." = "Porlier Pass",
+  "Dettwiller Point - Galiano Island" = "Porlier Pass",
+  # "E. Valdes" = "Porlier Pass",
+  "Flora Island  NE Hornby Island." = "Hornby Island",
+  "Flora Islet - Hornby Island" = "Hornby Island",
+  "Lambert Channel - Hornby Island" = "Hornby Island",
+  "Hornby island" = "Hornby Island",
+  "Salamanca Bank - Active pass" = "Active Pass",
+  "Salamanca Bank" = "Active Pass",
+  "Gabriola Island North side - Entrance Island" = "Gabriola Island",
+  "Entrance Island" = "Gabriola Island",
+  "Grants Reef" = "Grants Reefs",
+  "Grant Reef" = "Grants Reefs",
+  "Grants Reefs" = "Grants Reefs",
+  "Grant Reefs" = "Grants Reefs",
+  "Entrance Island - Gabriola North side" = "Gabriola Island",
+  "Sinclair Bank - Malaspina Strait" = "Sinclair Bank",
+  "Malaspina Strait" = "Sinclair Bank",
+  "Stillwater Bay" = "Sinclair Bank",
+  "North East Pont" = "Sinclair Bank",
+  "Entrance Island" = "Gabriola Island",
+  "Galiano Is. North" = "Active Pass",
+  "Thormanby Island" = "Epsom Point",
+  "Sandheads" = "Sturgeon Bank",
+  "Qualicum-Parksville" = "French Creek"
+)
+
+unique(dog2$location)
+ggplot(dog2, aes(grouping_desc, dogfish_count)) +
+  geom_boxplot() +
+  facet_wrap(~location)
+
+ggplot(
+  # filter(dog2, location %in% c("Sandheads", "Sturgeon Bank")),
+  # filter(dog2, location %in% c("Qualicum-Parksville", "French Creek")),
+  dog2,
+  aes(longitude, latitude, colour = location)
+) +
+  geom_point() +
+  geom_text(aes(label = location)) + 
+  #facet_wrap(~location + year, scales = "free")
+  facet_wrap(~year, scales = "free")
+
+dog2 %>%
+  group_by(year) %>%
+  distinct(location) %>%
+  tally()
+
+saveRDS(dog2, "C:/Dogfish surveys 2022/output/dogfishdata.rds")
+
+```
+
+Names are fixed. 
+```{r checknames}
+dog <- readRDS("C:/Dogfish surveys 2022/output/dogfishdata.rds")
+
+ggplot(dog, aes(grouping_desc, dogfish_count)) +
+  geom_boxplot() +
+  facet_wrap(~location)
+
+ggplot(
+  # filter(dog2, location %in% c("Sandheads", "Sturgeon Bank")),
+  # filter(dog2, location %in% c("Qualicum-Parksville", "French Creek")),
+  dog,
+  aes(longitude, latitude, colour = location)
+) +
+  geom_point() +
+  geom_text(aes(label = location)) + 
+  #facet_wrap(~location + year, scales = "free")
+  facet_wrap(~year, scales = "free")
+
+```
+
+Look at length distributions of the HBLL and DOG dogfish surveys. Used `get_survey_samples` to pull length information. Surveys included: `samps |> distinct(year, survey_series_desc) |> print (n= 30)`. 
+```{r loadsamps, eval = FALSE}
+
+allsamps <- get_survey_samples("north pacific spiny dogfish")
+unique(allsamps$survey_series_desc)
+test <- filter(allsamps, survey_series_desc == "Strait of Georgia Dogfish Longline")
+unique(test$year)
+
+dogsamps <- filter(allsamps, survey_series_desc %in% c("Hard Bottom Longline Inside North ",   
+                                                      "Strait of Georgia Dogfish Longline", 
+                                                "Hard Bottom Longline Inside South " ))
+
+saveRDS(dogsamps, "C:/Dogfish surveys 2022/output/dogfish_samps.rds")
+```
+
+
+```{r loadsamps}
+samps <- readRDS("C:/Dogfish surveys 2022/output/dogfish_samps.rds")
+#samps <- filter(samps, sex %in% c(1, 2))
+samps <- filter(samps, year >=2000 )
+range(samps$length)
+samps <- filter(samps, length > 25 )
+sort(unique(samps$year))
+sort(unique(samps$sex)) #1 male, 2 female, 3 unknown?
+
+# samps |> 
+#   distinct(year, survey_series_desc) |> 
+#   print (n= 30)
+
+```
+
+Density plots of lengths distributions for males and females. 
+```{r densityplots}
+
+ggplot() + 
+  geom_density(data = samps, aes(length, group = as.factor(survey_series_desc), 
+                                 fill = as.factor(survey_series_desc)), 
+               alpha = 0.35, size = 1, colour = "black") + 
+  facet_grid (~sex ) + 
+  theme_classic() + 
+  geom_rug(data = samps, aes(length)) + 
+  scale_fill_manual(values = c("lightblue", "darkblue", "yellow")) + 
+  #scale_fill_viridis_d() + 
+  ylab(label = "Density") + 
+  xlab(label = "Length")
+
+ggplot() +
+  #geom_jitter(data = samps, aes(year, length, 
+  #            colour = as.factor(survey_series_desc), alpha = 0.15)) + 
+   geom_jitter(data = samps, aes(survey_series_desc, length, group = as.factor(survey_series_desc), 
+                                 fill = as.factor(survey_series_desc)), 
+               alpha = 0.15, size = 0.5, colour = "grey10") +
+  geom_violin(data = samps, aes(survey_series_desc, length, group = as.factor(survey_series_desc), 
+                                 fill = as.factor(survey_series_desc)), 
+               size = 1, colour = "black", draw_quantiles = c(0.5)) + 
+  facet_grid (~sex) + 
+  theme_classic() + 
+  #geom_rug(data = samps, aes(length)) + 
+  scale_fill_manual(values = c("lightblue", "darkblue", "yellow")) + 
+  #scale_fill_viridis_d() + 
+  ylab(label = "Length") + 
+  xlab(label = "Year")
+
+ggplot() +
+  #geom_jitter(data = samps, aes(year, length, 
+  #            colour = as.factor(survey_series_desc), alpha = 0.15)) + 
+  geom_boxplot(data = filter(samps, sex %in% c(1,2)), aes(as.factor(year), length, 
+                                 fill = as.factor(survey_series_desc)), 
+               alpha = 0.35, size = 1, colour = "black") + 
+  #facet_wrap(~survey_series_desc)
+  facet_grid (~ survey_series_desc + sex)  + 
+  theme_classic() + 
+  scale_x_discrete(breaks = c(2003, 2009, 2015, 2022)) + 
+  #geom_rug(data = samps, aes(length)) + 
+  scale_fill_manual(values = c("blue", "darkblue", "yellow")) + 
+  #scale_fill_viridis_d() + 
+  ylab(label = "Length") + 
+  xlab(label = "Year")
+
+```
+
+Create an index using the HBLL and DOG surveys. 
+```{r}
+#1. check sets data
+dog <- readRDS("C:/Dogfish surveys 2022/output/dogfishdata.rds")
+dog$logbot_depth <- log(dog$depth_m)
+ggplot(dog, aes(longitude, latitude, colour = location)) + geom_point() + facet_wrap(~year)
+dog <- add_utm_columns(dog,
+  ll_names = c("longitude", "latitude"), units = "km",
+  utm_crs = 32609
+)
+mean_logbot_depth <- mean(dog$logbot_depth)
+dog$logbot_depth_cent <- dog$logbot_depth - mean_logbot_depth
+dog <- filter(dog, !is.na(depth_m))
+dog <- filter(dog, !is.na(julian))
+dog <- filter(dog, !is.na(dogfish_count))
+
+```
+
+Create grid
+```{r grid}
+
+
+shelf_SOG <- st_read("data", "SOG_polygon")
+plot(st_geometry(shelf_SOG), col = "red")
+shelf2 <- st_transform(shelf_SOG, "+proj=utm +zone=9 +datum=WGS84 +units=m +no_defs") #+proj=utm +zone=9 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs
+plot(st_geometry(shelf2), col = "red")
+
+# Create grid that covers the BC coast polygon/jurisdiction.
+grid_spacing <- 2000 # 2 X 2
+
+polygony <- st_make_grid(shelf2, square = T, cellsize = c(grid_spacing, grid_spacing)) %>%
+  st_sf() %>%
+  mutate(cell_ID = row_number())
+plot(st_geometry(polygony))
+
+center <- st_centroid(polygony)
+# grid_extent <- st_intersection(st_geometry(shelf2), st_geometry(polygony))
+grid_extent <- st_intersection(shelf2, polygony)
+plot(st_geometry(grid_extent))
+center2 <- st_centroid(grid_extent)
+
+test <- st_sf(grid_extent)
+test_center <- st_sf(center2)
+plot(st_geometry(grid_extent))
+plot(st_geometry(test_center), add = TRUE)
+
+test$area_km <- st_area(test) / 1000000 # m to km
+plot(st_geometry(test))
+plot(test_center, add = TRUE, pch = 21)
+st_write(test, "output/PredictionGrid_SOG.shp", append = FALSE)
+st_write(test_center, "output/PredictionGridCentres_SOG.shp", append = FALSE)
+
+
+# citation("PBSmapping")
+data(bcBathymetry) # bathymetry
+contour(bcBathymetry$x, bcBathymetry$y, bcBathymetry$z, col = "pink", method = "edge", vfont = c("sans serif", "plain"))
+
+cont <- contourLines(bcBathymetry$x, bcBathymetry$y, bcBathymetry$z, nlevels = 1000)
+clines <- ContourLines2SLDF(cont)
+clines@data[["level"]]
+lines <- st_as_sf(clines) # make sf object
+plot(lines)
+
+st_crs(lines) <- CRS("+proj=longlat")
+test
+c.linesproj <- st_transform(lines, crs = "+proj=utm +zone=9 +datum=WGS84 +units=m +no_defs")
+plot(c.linesproj)
+gridarea <- st_intersection(st_geometry(shelf2), st_geometry(c.linesproj)) %>% st_sfc(crs = "+proj=utm +zone=9 +datum=WGS84 +units=m +no_defs")
+plot(gridarea)
+gridarea2 <- st_collection_extract(gridarea, "LINESTRING")
+st_write(gridarea2, "output/Contours_SOG.shp", append = FALSE)
+plot(gridarea2)
+
+
+# Overlap the grid and the contour to get depth per grid point
+bathymetry <- st_read("output/Contours_SOG.shp")
+prediction_grid <- st_read("output/PredictionGrid_SOG.shp")
+plot(prediction_grid)
+prediction_center <- st_read("output/PredictionGridCentres_SOG.shp")
+glimpse(prediction_center)
+
+centerdf <- do.call(rbind, st_geometry(prediction_center)) %>%
+  as_tibble() %>%
+  setNames(c("X", "Y"))
+centerdf$value <- seq(1, nrow(centerdf))
+
+# lat and longs for each year to predict on
+centerdf2 <- expand.grid(value, years)
+names(centerdf2) <- c("value", "year")
+centerdf3 <- left_join(centerdf2, centerdf, by = c("value" = "value"))
+unique(centerdf3$year)
+
+## Create the clipping polygon
+maxlat <- max(centerdf$Y) # Northing, lat
+minlat <- min(centerdf$Y) # northing, lat
+maxlon <- max(centerdf$X) # Easting, long
+minlon <- min(centerdf$X) # easting, long
+
+.f <- "output/data-generated/NOAA-bathy.rds"
+if (!file.exists(.f)) {
+  # get bathymetry data
+  b <- marmap::getNOAA.bathy(lon1 = -150, lon2 = -110, lat1 = 30, lat2 = 70, resolution = 1)
+  saveRDS(b, file = .f)
+} else {
+  b <- readRDS(.f)
+}
+
+# convert center utms to lat and longs
+centerlatlon <- as.data.frame(centerdf) # y is lat, x is lon
+coordinates(centerlatlon) <- c("X", "Y") # c( "X", "Y")
+proj4string(centerlatlon) <- CRS("+proj=utm +zone=9 +datum=WGS84")
+centertrans <- spTransform(centerlatlon, CRS = "+proj=longlat + datum=WGS84")
+centertrans2 <- as.data.frame(coordinates(centertrans))
+
+
+names(centertrans2) <- c("lon", "lat")
+# names(centerdf3) <- c("value", "year", "UTM.lon", "UTM.lat")
+centertrans3 <- cbind(centerdf, centertrans2)
+names(centertrans3) <- c("UTM.lon.m", "UTM.lat.m", "value", "lon", "lat")
+depthpoints_center <- marmap::get.depth(b, centertrans3[, c("lon", "lat")], locator = FALSE)
+depthpoints_center2 <- depthpoints_center[!duplicated(depthpoints_center), ] # not sure why I had this...maybe to calculate mean and sd
+centertrans4 <- inner_join(depthpoints_center2, centertrans3, by = c("lat" = "lat", "lon" = "lon"))
+
+
+# see which point are the ones that have positive depths
+depth_predictiongrid <- filter(centertrans4, depth > -4)
+max(depth_predictiongrid$depth)
+plot(depth_predictiongrid$lon, depth_predictiongrid$lat) # prediction grid points with depth > 0
+dim(depth_predictiongrid)[1] # num pred. grid points with depth > 0
+
+# erase positive depth points
+# the range of deptsh surveyed by IPHC and Tralw and Longline is 9 - 1308 meters.
+centertrans5 <- filter(centertrans4, depth < -4)
+glimpse(centertrans5) # value is grid cell id
+plot(centertrans5$lon, centertrans5$lat) # prediction grid points with depth > 0
+
+names(centertrans5)[3] <- "depth_m"
+centertrans5$posdepth <- centertrans5$depth_m * -1
+centertrans5$logdepth <- log10(centertrans5$posdepth)
+saveRDS(centertrans5, "output/predictiongrid_bccoast_SOG.rds")
+
+
+# load prediction grid files ----------------------------------------------
+
+centertrans5 <- readRDS("output/predictiongrid_bccoast_SOG.rds")
+
+
+
+
+
+grid <- add_utm_columns(grid2, units = "km", utm_crs = 32609) |>
+  # rename("UTM.lon" = "X", "UTM.lat" = "Y") |>
+  # mutate(UTM.lon = round(UTM.lon, 2),
+  mutate(
+    X = round(X, 2),
+    area_swept = 1,
+    months_from_solstice = 0
+  )
+
+years <- seq(min(d$year), max(d$year), 1)
+grid <- purrr::map_dfr(years, ~ tibble(grid, year = .x))
+# grid <- purrr::map_dfr(unique(d$year), ~ tibble(grid, year = .x))
+
+grid$year_scaled <- (grid$year - 2010) / 10
+grid$year <- as.numeric(grid$year)
+grid$area_km <- as.numeric(grid$area_km)
+
+sort(unique(grid$year))
+sort(unique(grid$year_scaled))
+sort(unique(grid$area_km))
+sort(unique(grid$logbot_depth))
+sort(unique(grid$logbot_depth))
+
+```
+
+
+
+Create mesh
+```{r}
+
+plot(mesh$mesh, asp = 1, main = "")
+#points(grid$X, grid$Y, col = "blue")
+points(dog$X, dog$Y, col = "red")
+
+range(grid$X)
+range(d$X)
+
+mesh <- make_mesh(dog, xy_cols = c("X", "Y"), cutoff = 20)
+
+
+fourth_root_power_trans <- function() {
+  scales::trans_new(
+    name = "fourth root power",
+    transform = function(x) ifelse(x > 0, x^0.25, -(-x)^0.25),
+    inverse = function(x) ifelse(x > 0, x^4, -(-x)^4),
+    domain = c(-Inf, Inf))
+}
+
+ggplot() +
+  inlabru::gg(mesh$mesh) +
+  coord_fixed() +
+  geom_point(aes(X, Y), data = dog, alpha = 0.2, size = 0.5) +
+  geom_point(aes(X, Y, colour = dogfish_count, size = dogfish_count),
+    data = filter(dog, dogfish_count > 0)
+  ) +
+  facet_wrap(~year) +
+  scale_color_viridis_c(trans = "fourth_root_power")
+
+
+```
+
+Run model
+```{r indexmodelDOG}
+
+```
+
+Create index split by length
