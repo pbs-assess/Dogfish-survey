@@ -41,6 +41,8 @@ library(gfplot)
 library(tidyverse)
 library(here)
 library(sdmTMB)
+library(sf)
+library(sp)
 ```
 
 There are four DOG surveys in gfbio: `x$SURVEY_SERIES_DESC[x$SURVEY_SERIES_ID %in% c(48, 76, 92, 93)]`. These surveys include the two surveys that ran in 1986 and 1989 with J-hooks (ssid = 92); the comparison surveys completed in 2004, 2019, 2022 (ssid = 48), and the surveys completed with circle hooks in 2005, 2008, 2011, 2014, 2019.   
@@ -52,17 +54,17 @@ Details of the comparative surveys. 2019 HBLL with DOG circle hooks run at x sta
 ```{r data, eval = TRUE}
 x <- get_ssids()
 x$SURVEY_SERIES_DESC[x$SURVEY_SERIES_ID %in% c(48, 76, 92, 93)]
-#sets <- get_survey_sets(species = "north pacific spiny dogfish", ssid = c(48, 76, 92, 93))
-#saveRDS(sets,  "C:/Dogfish surveys 2022/output/dogfish_sets.rds")
-sets <- readRDS("C:/Dogfish surveys 2022/output/dogfish_sets.rds")
+# sets <- get_survey_sets(species = "north pacific spiny dogfish", ssid = c(48, 76, 92, 93))
+# saveRDS(sets,  "C:/Dogfish surveys 2022/output/dogfish_sets.rds")
+sets <- readRDS("output/dogfish_sets.rds")
 
 ```
 
 
 To access the data, I used a sql command and include those surveys completed with circle hooks `unique(sets$survey_series_desc)` in years `unique(sets$years)`. A calibration survey between the J-hook and circle hooks was completed in 2004. Calibrating those catches to extend the timeseries will be completed shortly. 
-```{r sqlfromsean}
+```{r sqlfromsean, eval = FALSE}
 
-#https://github.com/pbs-assess/yelloweye-inside/blob/master/dogfish/dogfish%20survey%20sets%20data.R
+# https://github.com/pbs-assess/yelloweye-inside/blob/master/dogfish/dogfish%20survey%20sets%20data.R
 
 fe <- gfdata::run_sql("GFBioSQL", "SELECT
   S.SURVEY_SERIES_ID,
@@ -77,7 +79,7 @@ fe <- gfdata::run_sql("GFBioSQL", "SELECT
   GROUPING_DESC,
   GROUPING_DEPTH_ID,
   FE_END_DEPLOYMENT_TIME,
-  FE.FE_FISHING_GROUND_COMMENT, 
+  FE.FE_FISHING_GROUND_COMMENT,
   FE_BEGIN_RETRIEVAL_TIME,
   FE_BEGINNING_BOTTOM_DEPTH AS DEPTH_M,
   FE_BOTTOM_WATER_TEMPERATURE,
@@ -126,9 +128,9 @@ dogfish_catch <- gfdata::run_sql("GFBioSQL", "SELECT
 names(dogfish_catch) <- tolower(names(dogfish_catch))
 
 d <- dplyr::left_join(fe, ye_catch)
-d <- dplyr::left_join(d, dogfish_catch, by ="fishing_event_id")
+d <- dplyr::left_join(d, dogfish_catch, by = "fishing_event_id")
 
-saveRDS(d, "C:/Dogfish surveys 2022/output/dogfishsql_sets.rds")
+saveRDS(d, "output/dogfishsql_sets.rds")
 ```
 
 Erase?
@@ -139,13 +141,13 @@ Erase?
 # Activity_code from aCTIVITY == 39
 # WHERE S.SURVEY_ID in (468,563, 564, 499, 501, 565, 566, 502, 503, 567, 568, 453)
 
-#return hook info and I can sum in R to get hook count. 
+# return hook info and I can sum in R to get hook count.
 test_hookyield <- gfdata::run_sql("GFBioSQL", "SELECT
   S.SURVEY_ID, S.SURVEY_SERIES_ID, F.FISHING_EVENT_ID,
   F.FE_MAJOR_LEVEL_ID, F.FE_PARENT_EVENT_ID,
   F.FE_SUB_LEVEL_ID, F.FE_MINOR_LEVEL_ID,
-	LLSP.LGLSP_HOOKS_SET_COUNT, 
-	LLSP.LGLSP_HOOK_COUNT, 
+	LLSP.LGLSP_HOOKS_SET_COUNT,
+	LLSP.LGLSP_HOOK_COUNT,
 	LLSP.SKATE_COUNT
 FROM FISHING_EVENT F
 INNER JOIN TRIP_SURVEY TS ON TS.TRIP_ID = F.TRIP_ID
@@ -155,8 +157,8 @@ INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
 ORDER BY FE_SUB_LEVEL_ID, FE_MINOR_LEVEL_ID
 ")
 
-test <- test_hookyield |> 
- filter(SURVEY_SERIES_ID == 76)
+test <- test_hookyield |>
+  filter(SURVEY_SERIES_ID == 76)
 
 dogsurvey <- gfdata::run_sql("GFBioSQL", "SELECT
   FEC.FISHING_EVENT_ID, C.SPECIES_CODE,
@@ -219,7 +221,7 @@ dogcomp %>%
   tally(is.na(fe_fishing_ground_comment) == TRUE)
 
 dog <- dogcomp %>%
-  #drop_na(fe_fishing_ground_comment) %>%
+  # drop_na(fe_fishing_ground_comment) %>%
   dplyr::inner_join(y)
 anti <- y %>% dplyr::anti_join(dogcomp) # 45 dont match cause it is aggregated by skate (j hook and circle hook combined) and so fishing event id, and disaggregated by j-hook and circle hook
 
@@ -244,18 +246,17 @@ unique(test$survey_series_desc)
 unique(sort(test$year))
 
 saveRDS(dog, "C:/Dogfish surveys 2022/output/dogfishsql_sets.rds")
-
 ```
 
 
 Plots of the raw data from sql command. 
 ```{r}
-d <- readRDS("C:/Dogfish surveys 2022/output/dogfishsql_sets.rds")
+dog <- readRDS("output/dogfishsql_sets.rds")
 
-unique(d$survey_series_id)
-sort(unique(d$year))
+unique(dog$survey_series_id)
+sort(unique(dog$year))
 
-test <- filter(d, survey_series_id == 76 )# no 1986, 1989,2004,  2022
+test <- filter(dog, survey_series_id == 76) # no 1986, 1989,2004,  2022
 unique(test$survey_series_desc)
 unique(sort(test$year))
 
@@ -265,15 +266,14 @@ ggplot(dog, aes(grouping_desc, dogfish_count)) +
 
 ```
 
-Note: hooks fished is variable across surveys. 
-
+Note: hooks fished is variable across surveys. See survey reports. 
 Here, I check the dates, survey timing, survey duration. etc including on surveys completed with circle hooks `unique(sort(dog$year))`. 
 
 ```{r cleandata}
 unique(dog$survey_series_desc)
 unique(sort(dog$year))
 dog <- filter(d, year > 2000)
-dog$deployment_time <- as.POSIXct(dog$fe_begin_retrieval_time) #this is from the other database that I collated
+dog$deployment_time <- as.POSIXct(dog$fe_begin_retrieval_time) # this is from the other database that I collated
 dog2 <- dog %>%
   mutate(dmy = lubridate::ymd_hms(fe_begin_retrieval_time)) %>%
   mutate(julian = lubridate::yday(dmy)) %>%
@@ -297,9 +297,8 @@ ggplot(dog2, aes(as.factor(year), julian)) +
 dog2$julianstart <- lubridate::yday(dog2$trip_start_date)
 dog2$julianend <- lubridate::yday(dog2$trip_end_date)
 dog2$duration <- dog2$julianend - dog2$julianstart
-#ggplot(dog2, aes(as.factor(year), duration)) +
+# ggplot(dog2, aes(as.factor(year), duration)) +
 #  geom_point(size = 2)
-
 ```
 
 Plot of DOG survey and date completed and duration. There is a lot of variability in both. 
@@ -310,11 +309,10 @@ ggplot(dog2, aes(as.factor(year), julian)) +
 
 ggplot(dog2, aes(as.factor(year), duration)) +
   geom_point(size = 2)
-
 ```
 
 The DOG survey is a fixed station survey with 4 depth strata (five depth strata in 1986 and 1989). The locations of the 10-14 stations is stored in the comments. Here, I standardize names, spelling, and correct some of the issues with different station names and lat and longs. 
-```{r}
+```{r fixstationnames}
 # fishing ground names
 ggplot(dog2, aes(grouping_desc, dogfish_count)) +
   geom_boxplot() +
@@ -405,8 +403,8 @@ ggplot(
   aes(longitude, latitude, colour = location)
 ) +
   geom_point() +
-  geom_text(aes(label = location)) + 
-  #facet_wrap(~location + year, scales = "free")
+  geom_text(aes(label = location)) +
+  # facet_wrap(~location + year, scales = "free")
   facet_wrap(~year, scales = "free")
 
 dog2 %>%
@@ -414,13 +412,12 @@ dog2 %>%
   distinct(location) %>%
   tally()
 
-saveRDS(dog2, "C:/Dogfish surveys 2022/output/dogfishdata.rds")
-
+saveRDS(dog2, "output/dogfishdata.rds")
 ```
 
 Names are fixed. 
 ```{r checknames}
-dog <- readRDS("C:/Dogfish surveys 2022/output/dogfishdata.rds")
+dog <- readRDS("output/dogfishdata.rds")
 
 ggplot(dog, aes(grouping_desc, dogfish_count)) +
   geom_boxplot() +
@@ -433,114 +430,47 @@ ggplot(
   aes(longitude, latitude, colour = location)
 ) +
   geom_point() +
-  geom_text(aes(label = location)) + 
-  #facet_wrap(~location + year, scales = "free")
+  geom_text(aes(label = location)) +
+  # facet_wrap(~location + year, scales = "free")
   facet_wrap(~year, scales = "free")
-
 ```
 
-Look at length distributions of the HBLL and DOG dogfish surveys. Used `get_survey_samples` to pull length information. Surveys included: `samps |> distinct(year, survey_series_desc) |> print (n= 30)`. 
-```{r loadsamps, eval = FALSE}
+Create an index using the HBLL and DOG surveys. Load DOGFISH survey data. 
+```{r DOGsurveydata }
 
-allsamps <- get_survey_samples("north pacific spiny dogfish")
-unique(allsamps$survey_series_desc)
-test <- filter(allsamps, survey_series_desc == "Strait of Georgia Dogfish Longline")
-unique(test$year)
+dog <- readRDS("output/dogfishdata.rds")
 
-dogsamps <- filter(allsamps, survey_series_desc %in% c("Hard Bottom Longline Inside North ",   
-                                                      "Strait of Georgia Dogfish Longline", 
-                                                "Hard Bottom Longline Inside South " ))
+#years <- seq(min(dog$year), max(dog$year), 1)
+years <- unique(dog$year)
 
-saveRDS(dogsamps, "C:/Dogfish surveys 2022/output/dogfish_samps.rds")
-```
-
-
-```{r loadsamps}
-samps <- readRDS("C:/Dogfish surveys 2022/output/dogfish_samps.rds")
-#samps <- filter(samps, sex %in% c(1, 2))
-samps <- filter(samps, year >=2000 )
-range(samps$length)
-samps <- filter(samps, length > 25 )
-sort(unique(samps$year))
-sort(unique(samps$sex)) #1 male, 2 female, 3 unknown?
-
-# samps |> 
-#   distinct(year, survey_series_desc) |> 
-#   print (n= 30)
-
-```
-
-Density plots of lengths distributions for males and females. 
-```{r densityplots}
-
-ggplot() + 
-  geom_density(data = samps, aes(length, group = as.factor(survey_series_desc), 
-                                 fill = as.factor(survey_series_desc)), 
-               alpha = 0.35, size = 1, colour = "black") + 
-  facet_grid (~sex ) + 
-  theme_classic() + 
-  geom_rug(data = samps, aes(length)) + 
-  scale_fill_manual(values = c("lightblue", "darkblue", "yellow")) + 
-  #scale_fill_viridis_d() + 
-  ylab(label = "Density") + 
-  xlab(label = "Length")
-
-ggplot() +
-  #geom_jitter(data = samps, aes(year, length, 
-  #            colour = as.factor(survey_series_desc), alpha = 0.15)) + 
-   geom_jitter(data = samps, aes(survey_series_desc, length, group = as.factor(survey_series_desc), 
-                                 fill = as.factor(survey_series_desc)), 
-               alpha = 0.15, size = 0.5, colour = "grey10") +
-  geom_violin(data = samps, aes(survey_series_desc, length, group = as.factor(survey_series_desc), 
-                                 fill = as.factor(survey_series_desc)), 
-               size = 1, colour = "black", draw_quantiles = c(0.5)) + 
-  facet_grid (~sex) + 
-  theme_classic() + 
-  #geom_rug(data = samps, aes(length)) + 
-  scale_fill_manual(values = c("lightblue", "darkblue", "yellow")) + 
-  #scale_fill_viridis_d() + 
-  ylab(label = "Length") + 
-  xlab(label = "Year")
-
-ggplot() +
-  #geom_jitter(data = samps, aes(year, length, 
-  #            colour = as.factor(survey_series_desc), alpha = 0.15)) + 
-  geom_boxplot(data = filter(samps, sex %in% c(1,2)), aes(as.factor(year), length, 
-                                 fill = as.factor(survey_series_desc)), 
-               alpha = 0.35, size = 1, colour = "black") + 
-  #facet_wrap(~survey_series_desc)
-  facet_grid (~ survey_series_desc + sex)  + 
-  theme_classic() + 
-  scale_x_discrete(breaks = c(2003, 2009, 2015, 2022)) + 
-  #geom_rug(data = samps, aes(length)) + 
-  scale_fill_manual(values = c("blue", "darkblue", "yellow")) + 
-  #scale_fill_viridis_d() + 
-  ylab(label = "Length") + 
-  xlab(label = "Year")
-
-```
-
-Create an index using the HBLL and DOG surveys. 
-```{r}
-#1. check sets data
-dog <- readRDS("C:/Dogfish surveys 2022/output/dogfishdata.rds")
 dog$logbot_depth <- log(dog$depth_m)
-ggplot(dog, aes(longitude, latitude, colour = location)) + geom_point() + facet_wrap(~year)
+ggplot(dog, aes(longitude, latitude, colour = location)) +
+  geom_point() +
+  facet_wrap(~year)
 dog <- add_utm_columns(dog,
   ll_names = c("longitude", "latitude"), units = "km",
   utm_crs = 32609
 )
-mean_logbot_depth <- mean(dog$logbot_depth)
+mean_logbot_depth <- mean(dog$logbot_depth, na.rm = TRUE)
 dog$logbot_depth_cent <- dog$logbot_depth - mean_logbot_depth
 dog <- filter(dog, !is.na(depth_m))
 dog <- filter(dog, !is.na(julian))
 dog <- filter(dog, !is.na(dogfish_count))
+dog$offset <- log(dog$lglsp_hook_count)
 
+dog$locationf <- as.factor(dog$location)
+x <- dog |>
+  group_by(year, location) |>
+  tally()
+# dog <- dog |>
+#   group_by(year, location) |>
+#   mutate(tally = n()) |>
+#   filter(tally >=3)
 ```
 
-Create grid
-```{r grid}
 
+Create grid
+```{r grid, eval = FALSE}
 
 shelf_SOG <- st_read("data", "SOG_polygon")
 plot(st_geometry(shelf_SOG), col = "red")
@@ -574,21 +504,22 @@ st_write(test_center, "output/PredictionGridCentres_SOG.shp", append = FALSE)
 
 
 # citation("PBSmapping")
+library(PBSmapping)
 data(bcBathymetry) # bathymetry
 contour(bcBathymetry$x, bcBathymetry$y, bcBathymetry$z, col = "pink", method = "edge", vfont = c("sans serif", "plain"))
 
 cont <- contourLines(bcBathymetry$x, bcBathymetry$y, bcBathymetry$z, nlevels = 1000)
-clines <- ContourLines2SLDF(cont)
+clines <- maptools::ContourLines2SLDF(cont)
 clines@data[["level"]]
 lines <- st_as_sf(clines) # make sf object
 plot(lines)
 
-st_crs(lines) <- CRS("+proj=longlat")
-test
+st_crs(lines) <- sp::CRS("+proj=longlat")
 c.linesproj <- st_transform(lines, crs = "+proj=utm +zone=9 +datum=WGS84 +units=m +no_defs")
 plot(c.linesproj)
 gridarea <- st_intersection(st_geometry(shelf2), st_geometry(c.linesproj)) %>% st_sfc(crs = "+proj=utm +zone=9 +datum=WGS84 +units=m +no_defs")
 plot(gridarea)
+
 gridarea2 <- st_collection_extract(gridarea, "LINESTRING")
 st_write(gridarea2, "output/Contours_SOG.shp", append = FALSE)
 plot(gridarea2)
@@ -597,7 +528,7 @@ plot(gridarea2)
 # Overlap the grid and the contour to get depth per grid point
 bathymetry <- st_read("output/Contours_SOG.shp")
 prediction_grid <- st_read("output/PredictionGrid_SOG.shp")
-plot(prediction_grid)
+plot(st_geometry(prediction_grid))
 prediction_center <- st_read("output/PredictionGridCentres_SOG.shp")
 glimpse(prediction_center)
 
@@ -607,7 +538,7 @@ centerdf <- do.call(rbind, st_geometry(prediction_center)) %>%
 centerdf$value <- seq(1, nrow(centerdf))
 
 # lat and longs for each year to predict on
-centerdf2 <- expand.grid(value, years)
+centerdf2 <- expand.grid(unique(centerdf$value), years)
 names(centerdf2) <- c("value", "year")
 centerdf3 <- left_join(centerdf2, centerdf, by = c("value" = "value"))
 unique(centerdf3$year)
@@ -618,14 +549,7 @@ minlat <- min(centerdf$Y) # northing, lat
 maxlon <- max(centerdf$X) # Easting, long
 minlon <- min(centerdf$X) # easting, long
 
-.f <- "output/data-generated/NOAA-bathy.rds"
-if (!file.exists(.f)) {
-  # get bathymetry data
-  b <- marmap::getNOAA.bathy(lon1 = -150, lon2 = -110, lat1 = 30, lat2 = 70, resolution = 1)
-  saveRDS(b, file = .f)
-} else {
-  b <- readRDS(.f)
-}
+b <- marmap::getNOAA.bathy(lon1 = -150, lon2 = -110, lat1 = 30, lat2 = 70, resolution = 1)
 
 # convert center utms to lat and longs
 centerlatlon <- as.data.frame(centerdf) # y is lat, x is lon
@@ -633,7 +557,6 @@ coordinates(centerlatlon) <- c("X", "Y") # c( "X", "Y")
 proj4string(centerlatlon) <- CRS("+proj=utm +zone=9 +datum=WGS84")
 centertrans <- spTransform(centerlatlon, CRS = "+proj=longlat + datum=WGS84")
 centertrans2 <- as.data.frame(coordinates(centertrans))
-
 
 names(centertrans2) <- c("lon", "lat")
 # names(centerdf3) <- c("value", "year", "UTM.lon", "UTM.lat")
@@ -657,65 +580,61 @@ glimpse(centertrans5) # value is grid cell id
 plot(centertrans5$lon, centertrans5$lat) # prediction grid points with depth > 0
 
 names(centertrans5)[3] <- "depth_m"
-centertrans5$posdepth <- centertrans5$depth_m * -1
-centertrans5$logdepth <- log10(centertrans5$posdepth)
+centertrans5$depth_m_neg <- centertrans5$depth_m
+centertrans5$depth_m <- centertrans5$depth_m_neg * -1
+centertrans5$logdepth <- log10(centertrans5$depth_m)
 saveRDS(centertrans5, "output/predictiongrid_bccoast_SOG.rds")
-
-
-# load prediction grid files ----------------------------------------------
-
-centertrans5 <- readRDS("output/predictiongrid_bccoast_SOG.rds")
-
-
-
-
-
-grid <- add_utm_columns(grid2, units = "km", utm_crs = 32609) |>
-  # rename("UTM.lon" = "X", "UTM.lat" = "Y") |>
-  # mutate(UTM.lon = round(UTM.lon, 2),
-  mutate(
-    X = round(X, 2),
-    area_swept = 1,
-    months_from_solstice = 0
-  )
-
-years <- seq(min(d$year), max(d$year), 1)
-grid <- purrr::map_dfr(years, ~ tibble(grid, year = .x))
-# grid <- purrr::map_dfr(unique(d$year), ~ tibble(grid, year = .x))
-
-grid$year_scaled <- (grid$year - 2010) / 10
-grid$year <- as.numeric(grid$year)
-grid$area_km <- as.numeric(grid$area_km)
-
-sort(unique(grid$year))
-sort(unique(grid$year_scaled))
-sort(unique(grid$area_km))
-sort(unique(grid$logbot_depth))
-sort(unique(grid$logbot_depth))
-
 ```
 
+Load prediction grid
+```{r predictiongridload}
 
+grid <- readRDS("output/predictiongrid_bccoast_SOG.rds")
+ggplot(grid, aes(UTM.lon.m, UTM.lat.m, colour = depth_m)) +
+  geom_point()
+grid <- grid |> filter(UTM.lon.m > 750000)
+grid$offset <- log(1)
+max <- as.numeric(max(dog$depth_m))
+min <- as.numeric(min(dog$depth_m))
+grid <- grid |> filter(depth_m <= max)
+grid <- grid |> filter(depth_m >= min)
+grid$logbot_depth <- log(grid$depth_m)
+grid$X <- grid$UTM.lon.m / 1000
+grid$Y <- grid$UTM.lat.m / 1000
+sort(unique(grid$year))
+ggplot(grid, aes(UTM.lon.m, UTM.lat.m, colour = depth_m)) +
+  geom_point()
+grid$julian <- 287
+grid$juliansmall = 0
+grid$logbot_depth_cent <- grid$logbot_depth - mean_logbot_depth
+
+range(dog$Y)
+range(dog$X)
+
+grid <- grid |> filter(X <= 915.7025 )
+grid <- grid |> filter(Y <=5545.813 )
+
+grid <- grid |> filter(X >= 777.9039 )
+grid <- grid |> filter(Y >= 5433.850 )
+
+```
 
 Create mesh
 ```{r}
 
-plot(mesh$mesh, asp = 1, main = "")
-#points(grid$X, grid$Y, col = "blue")
-points(dog$X, dog$Y, col = "red")
-
-range(grid$X)
-range(d$X)
-
 mesh <- make_mesh(dog, xy_cols = c("X", "Y"), cutoff = 20)
 
+plot(mesh$mesh, asp = 1, main = "")
+points(grid$X, grid$Y, col = "blue")
+points(dog$X, dog$Y, col = "red")
 
 fourth_root_power_trans <- function() {
   scales::trans_new(
     name = "fourth root power",
     transform = function(x) ifelse(x > 0, x^0.25, -(-x)^0.25),
     inverse = function(x) ifelse(x > 0, x^4, -(-x)^4),
-    domain = c(-Inf, Inf))
+    domain = c(-Inf, Inf)
+  )
 }
 
 ggplot() +
@@ -727,13 +646,64 @@ ggplot() +
   ) +
   facet_wrap(~year) +
   scale_color_viridis_c(trans = "fourth_root_power")
-
-
 ```
 
-Run model
+
 ```{r indexmodelDOG}
 
-```
+#dog$juliansmall <- dog$julian - min(dog$julian)
+#dog <- filter(dog, year > 2000)
 
-Create index split by length
+unique(sort(dog$year))
+dog |>
+  ggplot() +
+  geom_point(aes(year, dogfish_count)) 
+
+dog |>
+  group_by(year) |>
+  mutate(sum = sum(dogfish_count)) |>
+  ggplot() +
+  geom_point(aes(year, sum)) +
+  geom_line(aes(year, sum))
+
+dog |>
+  group_by(year) |>
+  mutate(cpue = sum(dogfish_count) / sum(lglsp_hook_count)) |>
+  ggplot() +
+  geom_point(aes(year, cpue)) +
+  geom_line(aes(year, cpue))
+
+dog <- droplevels(dog)
+mind <- sdmTMB(
+  formula = dogfish_count ~  1, # + (1|locationf), # logbot_depth_cent + I(logbot_depth_cent^2), # + juliansmall + locationf ,
+  offset = dog$offset/100,
+  data = dog,
+  mesh = mesh, #mesh cutoff 1km
+  spatiotemporal = "rw",
+  time = "year",
+  control = sdmTMBcontrol(
+    newton_loops = 1L),
+  #extra_time = c(2006, 2007, 2009, 2010, 2012, 2013, 2015, 2016, 2017, 2018),
+  silent = FALSE,
+  family = tweedie(),
+  spatial = TRUE)
+
+sanity(mind)
+mind$sd_report
+saveRDS(mind, "output/DOGmodel.rds")
+
+#years <- seq(min(dog$year), max(dog$year), 1)
+#years <- unique(dog$year)
+grid <- purrr::map_dfr(as.numeric(years), ~ tibble(grid, year = .x))
+
+grid$locationf <- "Cape Mudge"
+pred <- predict(mind, newdata = grid, return_tmb_object = TRUE)
+index <- get_index(pred, area = grid$area_km, bias_correct = TRUE)
+
+ggplot(index, aes(year, est)) +
+  geom_line(col = "#8D9999") +
+  geom_point(col = "#8D9999") +
+   geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.4, fill = "#8D9999") +
+  theme_classic()
+
+```
