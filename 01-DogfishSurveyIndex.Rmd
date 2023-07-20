@@ -133,6 +133,82 @@ d <- dplyr::left_join(d, dogfish_catch, by = "fishing_event_id")
 saveRDS(d, "output/dogfishsql_sets.rds")
 ```
 
+
+```{r sqlfromsean, eval = FALSE}
+
+# https://github.com/pbs-assess/yelloweye-inside/blob/master/dogfish/dogfish%20survey%20sets%20data.R
+
+fe <- gfdata::run_sql("GFBioSQL", "SELECT
+  S.SURVEY_SERIES_ID,
+  SURVEY_SERIES_DESC,
+  S.SURVEY_ID,
+  SURVEY_DESC,
+  YEAR(FE_BEGIN_RETRIEVAL_TIME) YEAR,
+  FE.FISHING_EVENT_ID,
+  FE_START_LATTITUDE_DEGREE + FE_START_LATTITUDE_MINUTE / 60 AS LATITUDE,
+  -(FE_START_LONGITUDE_DEGREE + FE_START_LONGITUDE_MINUTE / 60) AS LONGITUDE,
+  FE.GROUPING_CODE,
+  GROUPING_DESC,
+  GROUPING_DEPTH_ID,
+  FE_END_DEPLOYMENT_TIME,
+  FE.FE_FISHING_GROUND_COMMENT,
+  FE_BEGIN_RETRIEVAL_TIME,
+  FE_BEGINNING_BOTTOM_DEPTH AS DEPTH_M,
+  FE_BOTTOM_WATER_TEMPERATURE,
+  TR.TRIP_START_DATE,
+  TR.TRIP_END_DATE,
+  HOOK_CODE,
+  SKATE_COUNT,
+  LGLSP_HOOK_COUNT,
+  0.0024384 * 0.009144 * LGLSP_HOOK_COUNT AS AREA_SWEPT_KM2 --0.024384 = 8 ft hook spacing (to calculate line length with hook count); 0.009144 = 2*gangion length (= area width)
+  FROM FISHING_EVENT FE
+  INNER JOIN TRIP_SURVEY TS ON FE.TRIP_ID = TS.TRIP_ID
+  INNER JOIN TRIP TR ON FE.TRIP_ID = TR.TRIP_ID
+  INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
+  INNER JOIN SURVEY_SERIES SS ON SS.SURVEY_SERIES_ID = S.SURVEY_SERIES_ID
+  INNER JOIN LONGLINE_SPECS LLSP ON LLSP.FISHING_EVENT_ID = FE.FISHING_EVENT_ID
+  INNER JOIN GROUPING G ON G.GROUPING_CODE = FE.GROUPING_CODE
+  WHERE S.SURVEY_SERIES_ID IN (76)")
+names(fe) <- tolower(names(fe))
+
+#does this bring all of the species code?
+all_catch <- gfdata::run_sql("GFBioSQL", "SELECT
+  FEC.FISHING_EVENT_ID,
+  FEC.TRIP_ID,
+  C.SPECIES_CODE,
+  SUM(CATCH_COUNT) CATCH_COUNT
+  FROM FISHING_EVENT_CATCH FEC
+  INNER JOIN CATCH C ON C.CATCH_ID = FEC.CATCH_ID
+  INNER JOIN TRIP_SURVEY TS ON TS.TRIP_ID = FEC.TRIP_ID
+  INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
+  WHERE S.SURVEY_SERIES_ID = 76
+  GROUP BY FEC.TRIP_ID,
+  FEC.FISHING_EVENT_ID,
+  C.SPECIES_CODE
+  ORDER BY FEC.FISHING_EVENT_ID")
+names(all_catch) <- tolower(names(all_catch))
+
+# dogfish_catch <- gfdata::run_sql("GFBioSQL", "SELECT
+#   FEC.FISHING_EVENT_ID,
+#   SUM(CATCH_COUNT) DOGFISH_COUNT
+#   FROM FISHING_EVENT_CATCH FEC
+#   INNER JOIN CATCH C ON C.CATCH_ID = FEC.CATCH_ID
+#   INNER JOIN TRIP_SURVEY TS ON TS.TRIP_ID = FEC.TRIP_ID
+#   INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
+#   WHERE C.SPECIES_CODE IN ('044') AND SURVEY_SERIES_ID = 76
+#   GROUP BY FEC.TRIP_ID,
+#   FEC.FISHING_EVENT_ID,
+#   C.SPECIES_CODE
+#   ORDER BY FEC.FISHING_EVENT_ID")
+#names(dogfish_catch) <- tolower(names(dogfish_catch))
+
+d <- dplyr::left_join(fe, all_catch)
+#d <- dplyr::left_join(d, dogfish_catch, by = "fishing_event_id")
+
+saveRDS(d, "output/dogfishsql_sets_allspecies.rds")
+```
+
+
 Erase?
 ```{r sql, eval = FALSE}
 
@@ -659,6 +735,8 @@ dog |>
   ggplot() +
   geom_point(aes(year, dogfish_count)) 
 
+sum(dog$dogfish_count ==0) # 
+
 dog |>
   group_by(year) |>
   mutate(sum = sum(dogfish_count)) |>
@@ -672,20 +750,41 @@ dog |>
   ggplot() +
   geom_point(aes(year, cpue)) +
   geom_line(aes(year, cpue))
-
+range(dog$dogfish_count)
+range(dog$offset)
+range(dog$year)
 dog <- droplevels(dog)
+dog <- dog |> 
+  mutate(dogfish_count = ifelse(year %in% c(1986, 1989), dogfish_count * 1.6, dogfish_count))
+dog$smalloffset <- log(dog$hook_count/10)
+
+t <- filter(dog, gear_type)
+hist(dog$offset)
+
+#do the calibration in the model (2004) 
+#include every row of data gets a gear type
+#colum of gear type
+#include geartype in the model 
+#different catcability for each geartype
+#a ratio of catchability
+#predict on a geartype.....
+#for prediction grid
+gfplot::dogfish_grid
+ggplot(dogfish_grid$grid, aes(X, Y )) + geom_point()
+ggplot(dog, aes(X, Y)) + geom_point()
+
 mind <- sdmTMB(
-  formula = dogfish_count ~  1, # + (1|locationf), # logbot_depth_cent + I(logbot_depth_cent^2), # + juliansmall + locationf ,
-  offset = dog$offset/100,
+  formula = dogfish_count ~  1 + as.factor(year) + juliansmall, # + logbot_depth_cent + I(logbot_depth_cent^2) + juliansmall + locationf ,
+  offset = dog$offset,
   data = dog,
-  mesh = mesh, #mesh cutoff 1km
-  spatiotemporal = "rw",
+  mesh = mesh, 
+  spatiotemporal = "off", 
+  #spatiotemporal = FALSE, 
+  #spatiotemporal = "IID",
   time = "year",
-  control = sdmTMBcontrol(
-    newton_loops = 1L),
   #extra_time = c(2006, 2007, 2009, 2010, 2012, 2013, 2015, 2016, 2017, 2018),
   silent = FALSE,
-  family = tweedie(),
+  family = Gamma(link = "log"), #compare posson family (count dis with no dispersion, mean = variance), create new column that is unique for each observation, then create a random effect , same number of parameter, can compare AIC with Nbinom2, ( 1|obs) creates one sd allows for more variability dispersion in he data, 
   spatial = TRUE)
 
 sanity(mind)
@@ -693,13 +792,17 @@ mind$sd_report
 saveRDS(mind, "output/DOGmodel.rds")
 
 #years <- seq(min(dog$year), max(dog$year), 1)
-#years <- unique(dog$year)
-grid <- purrr::map_dfr(as.numeric(years), ~ tibble(grid, year = .x))
-
-grid$locationf <- "Cape Mudge"
+years <- unique(dog$year)
+grid <- grid |> select(-year) |> distinct()
+grid <- purrr::map_dfr(as.numeric(years), ~ tibble(dogfish_grid$grid, year = .x))
+grid$juliansmall <- 0
+grid$offset <- 0
+#grid$locationf <- "Cape Mudge"
 pred <- predict(mind, newdata = grid, return_tmb_object = TRUE)
-index <- get_index(pred, area = grid$area_km, bias_correct = TRUE)
+index <- get_index(pred, area = 4, bias_correct = TRUE)
 
+# ggplot(grid, aes(X, Y)) + geom_point()
+# 
 ggplot(index, aes(year, est)) +
   geom_line(col = "#8D9999") +
   geom_point(col = "#8D9999") +
