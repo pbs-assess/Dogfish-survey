@@ -62,7 +62,7 @@ sets <- readRDS("output/dogfish_sets.rds")
 
 
 To access the data, I used a sql command and include those surveys completed with circle hooks `unique(sets$survey_series_desc)` in years `unique(sets$years)`. A calibration survey between the J-hook and circle hooks was completed in 2004. Calibrating those catches to extend the timeseries will be completed shortly. 
-```{r sqlfromsean, eval = FALSE}
+```{r dogfishsurveys, eval = FALSE}
 
 # https://github.com/pbs-assess/yelloweye-inside/blob/master/dogfish/dogfish%20survey%20sets%20data.R
 
@@ -321,7 +321,28 @@ test <- filter(dog, year == 2022)
 unique(test$survey_series_desc)
 unique(sort(test$year))
 
-saveRDS(dog, "C:/Dogfish surveys 2022/output/dogfishsql_sets.rds")
+saveRDS(dog, "output/dogfishsql_sets.rds")
+```
+
+##2022 survey sites
+```{r}
+
+dog <- readRDS("output/dogfishsql_sets.rds")
+x <- filter(dog, year == 2022)
+test <- filter(x, fe_fishing_ground_comment == "SoG Dogfish Site Sinclair Bank")
+
+ggplot(dog, aes(longitude, latitude, group = survey_desc, colour = survey_desc)) + 
+  geom_point(size = 2) + scale_colour_viridis_d() + theme_classic() + 
+  scale_x_continuous(limits = c(-124.5, -124.1)) + 
+  scale_y_continuous(limits = c(49.4, 50))
+
+test <- filter(dog, survey_series_id %in% c(93, 48)) 
+unique(test$survey_series_desc)
+unique(sort(test$year))
+
+ggplot(test, aes(longitude, latitude, group = survey_desc, colour = survey_desc)) + 
+  geom_point()
+
 ```
 
 
@@ -329,8 +350,14 @@ Plots of the raw data from sql command.
 ```{r}
 dog <- readRDS("output/dogfishsql_sets.rds")
 
+test <- filter(dog, year %in% c(1986, 1989))
+unique(test$fe_fishing_ground_comment)
 unique(dog$survey_series_id)
 sort(unique(dog$year))
+
+ggplot(dog, aes(year, dogfish_count)) +
+  geom_boxplot() +
+  facet_wrap(~fe_fishing_ground_comment)
 
 test <- filter(dog, survey_series_id == 76) # no 1986, 1989,2004,  2022
 unique(test$survey_series_desc)
@@ -468,7 +495,11 @@ dog2$location <- recode(vec,
 )
 
 unique(dog2$location)
-ggplot(dog2, aes(grouping_desc, dogfish_count)) +
+ggplot(dog2, aes(grouping_desc, catch_count)) +
+  geom_boxplot() +
+  facet_wrap(~location)
+
+ggplot(dog2, aes(year, catch_count)) +
   geom_boxplot() +
   facet_wrap(~location)
 
@@ -495,7 +526,7 @@ Names are fixed.
 ```{r checknames}
 dog <- readRDS("output/dogfishdata.rds")
 
-ggplot(dog, aes(grouping_desc, dogfish_count)) +
+ggplot(dog, aes(grouping_desc, catch_count)) +
   geom_boxplot() +
   facet_wrap(~location)
 
