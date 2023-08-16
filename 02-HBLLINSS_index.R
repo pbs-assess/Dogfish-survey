@@ -70,6 +70,7 @@ dog |>
   ggplot() +
   geom_point(aes(longitude, latitude)) + 
   facet_wrap(~year)
+
 #saveRDS(dog, "output/dogsog_hbllsouthcleaned.rds")
 #dog <- readRDS( "output/dogsog_hbllsouthcleaned.rds")
 saveRDS(dog, "output/dogsog_hbllsouthnorthcleaned.rds")
