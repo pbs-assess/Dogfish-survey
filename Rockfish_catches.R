@@ -31,28 +31,10 @@ theme_set(ggsidekick::theme_sleek())
 
 #pull from Dogfish_data_pull.R
 
+d <- readRDS("output/dogfishs_allsets_allspecies.rds")
+
+
 # Catch of Rockfish by depth by year --------------------------------------
-
-# d <- readRDS("output/dogfishsql_80sets_allspecies_clean.rds")
-d <- readRDS("output/dogfishsql_allspecies_clean.rds")
-scodes <- read.csv("data/species_codes.csv")
-
-# species captured
-unique(d$species_code)
-
-
-# missing names for species codes - complete later
-species_code <- filter(d, species_code %in% c("038", "051", "3J0", "4GA", "459", "499", "602", "225"))
-species_name <- c(
-  "brown cat shark", "skates", "anthozoa", "starfish", "greenlings",
-  "buffalo sculpin", "arrowtooth flounder", "pacific hake"
-)
-species_latin <- NA
-x <- data.frame(species_code = unique(species_code[, "species_code"]), species_name, species_latin)
-scodes2 <- rbind(scodes, x)
-str(scodes2)
-
-# join database
 d <- left_join(d, scodes2)
 # drop the species without codes ###COME BACK TO  THIS  THOUGH
 
