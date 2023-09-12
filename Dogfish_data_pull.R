@@ -1,10 +1,12 @@
 
 # Code for creating one database of all Dogfish surveys including comparisons, j hooks, and dogfish surveys
 # Note
-# SURVEY_SERIES_ID == 48) #2019 survey since it was 2 different sets with different hooks
+# SURVEY_SERIES_ID == 48) #2004, 2019 survey since it was 2 different sets with different hooks
 # SURVEY_SERIES_ID == 93) # 2005 onwards dogfish survey
 # SURVEY_SERIES_ID == 76) # 1986 onwards dogfish survey DROP THIS ONE
 # SURVEY_SERIES_ID == 92) # 1986, 1989 survey
+
+# note yelloweye rockfish were not sampled in earlier years. 1986/1989 maybe not 2004?
 
 # library -----------------------------------------------------------------
 library(sf)
@@ -51,7 +53,7 @@ LEFT JOIN GROUPING G ON G.GROUPING_CODE = FE.GROUPING_CODE
 WHERE S.SURVEY_SERIES_ID IN (48, 76, 92, 93)
 AND FE.FE_MAJOR_LEVEL_ID < 1000 AND FE_PARENT_EVENT_ID IS NULL
 ORDER BY YEAR, TRIP_ID, FE_MAJOR_LEVEL_ID, FE_SUB_LEVEL_ID")
-saveRDS(info, "output/dogfish_sets.rds")
+
 
 dsurvey_bio <- gfdata::run_sql("GFBioSQL", "SELECT
 A.ACTIVITY_DESC,
@@ -79,9 +81,37 @@ INNER JOIN SURVEY SR ON TS.SURVEY_ID = SR.SURVEY_ID
 INNER JOIN SURVEY_SERIES SS ON SR.SURVEY_SERIES_ID = SS.SURVEY_SERIES_ID
 INNER JOIN GFBioSQL.dbo.ACTIVITY A ON A.ACTIVITY_CODE = TA.ACTIVITY_CODE
 INNER JOIN GFBioSQL.dbo.SPECIES S ON S.SPECIES_CODE = B21.SPECIES_CODE
-WHERE TA.ACTIVITY_CODE IN (39,53)
+WHERE SR.SURVEY_SERIES_ID IN (48, 76, 92, 93)
 ORDER BY B21.TRIP_ID, B21.FE_MAJOR_LEVEL_ID, B22.SPECIMEN_ID")
+
+# note yelloweye rockfish not sampled, therefore not entries.
+x <- filter(dsurvey_bio, YEAR == 1986)
+unique(x$SPECIES_COMMON_NAME)
+
+# this has the catch count per species
+catchcount <- gfdata::run_sql("GFBioSQL", "SELECT
+FEC.FISHING_EVENT_ID,
+C.SPECIES_CODE,
+SP.SPECIES_COMMON_NAME,
+SP.SPECIES_SCIENCE_NAME,
+SUM(CATCH_COUNT) CATCH_COUNT
+FROM FISHING_EVENT_CATCH FEC
+INNER JOIN CATCH C ON C.CATCH_ID = FEC.CATCH_ID
+INNER JOIN TRIP_SURVEY TS ON TS.TRIP_ID = FEC.TRIP_ID
+INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
+INNER JOIN GFBioSQL.dbo.SPECIES SP ON SP.SPECIES_CODE = C.SPECIES_CODE
+WHERE SURVEY_SERIES_ID IN (48, 76, 92, 93)
+GROUP BY FEC.TRIP_ID,
+FEC.FISHING_EVENT_ID,
+C.SPECIES_CODE,
+SP.SPECIES_COMMON_NAME,
+SP.SPECIES_SCIENCE_NAME
+ORDER BY FEC.FISHING_EVENT_ID")
+
+
 saveRDS(dsurvey_bio, "output/dogfish_samples.rds")
+saveRDS(catchcount, "output/dogfish_counts.rds")
+saveRDS(info, "output/dogfish_sets.rds")
 
 
 # QA/QC data -------------------------------------------------------------
@@ -133,94 +163,6 @@ final3 <- rbind(add, ptsint)
 
 ggplot(final3, aes(longitude, latitude, colour = site_gis, group = fe_fishing_ground_comment)) +
   geom_point()
-
-
-# clean names based on names - erase? -------------------------------------
-
-# ###or check names and manually change.
-# # fishing event 1989, 3369551 says Gabriola but is Galiano - Active Pass
-# filter(final, FEI == 3369551)
-# # fishing event 3369552 1989 Gabriola should be Galiano
-# filter(final, FEI == 3369552)
-# final$fe_fishing_ground_comment <- ifelse(final$FEI %in% c(3369552, 3369551), "Active Pass",
-#                                           final$fe_fishing_ground_comment)
-# # fishing event 1986 3369471 Porlier Pass is way outside of the box
-# filter(final, FEI == 3369471)
-# final <- filter(final, FEI != 3369471)
-# # fishing event mid straits - not sure if that is Cape Lazo or Grants Reef, fishing event 3369532
-# filter(final, fe_fishing_ground_comment == "Mid Straits")
-# final <- filter(final, fe_fishing_ground_comment != "Mid Straits")
-#
-# # Names have different spellings etc. FIX
-# vec <- (final$fe_fishing_ground_comment)
-# unique(vec) #should only be 14 sites max!
-#
-# final$fe_fishing_ground_comment <- recode(vec,
-#                                       "Salamanca Bank - Active pass" = "Active Pass",
-#                                       "Salamanca Bank" = "Active Pass",
-#                                       "White Isle - Halibut Bank" = "Halibut Banks",
-#                                       "White Isle" = "Halibut Banks",
-#                                       "While Isle - Halibut Bank" = "Halibut Banks",
-#                                       "Halibut Bank" = "Halibut Banks",
-#                                       "Gabriola Island North side - Entrance Island" = "Entrance Island",
-#                                       "Gabriola Island" = "Entrance Island",
-#                                       "Entrance Island - Gabriola North side" = "Entrance Island",
-#                                       "Dettwiller Point - Galiano Island North side." = "Active Pass",
-#                                       "Dettwiller Point Galiano Island North." = "Active Pass",
-#                                       "Dettwiller Point - Galiano Island" = "Active Pass",
-#                                       "Sinclair Bank - Malaspina Strait" = "Sinclair Bank",
-#                                       "Malaspina Strait" = "Sinclair Bank",
-#                                       "Stillwater Bay" = "Sinclair Bank",
-#                                       "North East Pont" = "Sinclair Bank",
-#                                       "Flora Island  NE Hornby Island." = "Hornby Island",
-#                                       "Flora Islet - Hornby Island" = "Hornby Island",
-#                                       "Lambert Channel - Hornby Island" = "Hornby Island",
-#                                       "Hornby island" = "Hornby Island",
-#                                       "Espom Point" = "Espon Point",
-#                                       "Epson Point" = "Espon Point",
-#                                       "Epsom Point" = "Espon Point",
-#                                       "SoG Dogfish Site Epsom Point" = "Espon Point",
-#                                       "West Cape Lazo" = "Cape Lazo",
-#                                       "White Isle - Halibut Bank" = "Halibut Banks",
-#                                       "White Isle" = "Halibut Banks",
-#                                       "Halibut Bank" = "Halibut Banks",
-#                                       "While Isle - Halibut Bank" = "Halibut Banks",
-#                                       "Polier Pass" = "Porlier Pass",
-#                                       "E. Valdes" = "Porlier Pass",
-#                                       "Dettwiller Point Galiano Island North." = "Porlier Pass",
-#                                       "Dettwiller Point - Galiano Island North side." = "Porlier Pass",
-#                                       "Dettwiller Point - Galiano Island" = "Porlier Pass",
-#                                       # "E. Valdes" = "Porlier Pass",
-#                                       "Flora Island  NE Hornby Island." = "Hornby Island",
-#                                       "Flora Islet - Hornby Island" = "Hornby Island",
-#                                       "Lambert Channel - Hornby Island" = "Hornby Island",
-#                                       "Hornby island" = "Hornby Island",
-#                                       "Salamanca Bank - Active pass" = "Active Pass",
-#                                       "Salamanca Bank" = "Active Pass",
-#                                       "Gabriola Island North side - Entrance Island" = "Entrance Island",
-#                                       "Grants Reef" = "Grants Reefs",
-#                                       "Grant Reef" = "Grants Reefs",
-#                                       "Grants Reefs" = "Grants Reefs",
-#                                       "Grant Reefs" = "Grants Reefs",
-#                                       "Entrance Island - Gabriola North side" = "Entrance Island",
-#                                       "Sinclair Bank - Malaspina Strait" = "Sinclair Bank",
-#                                       "Malaspina Strait" = "Sinclair Bank",
-#                                       "Stillwater Bay" = "Sinclair Bank",
-#                                       "North East Pont" = "Sinclair Bank",
-#                                       "Galiano Is. North" = "Active Pass",
-#                                       "Thormanby Island" = "Espon Point",
-#                                       "Sandheads" = "Sturgeon Bank",
-#                                       "Qualicum-Parksville" = "French Creek",
-#                                       "SoG Dogfish Site Sinclair Bank" = "Sinclair Bank",
-#                                       "SoG Dogfish Site Sturgeon Bank" = "Sturgeon Bank",
-#                                       "SoG Dogfish Site Active Pass" = "Active Pass",
-#                                       "SoG Dogfish Site Porlier Pass" = "Porlier Pass",
-#                                       "SoG Dogfish Site Entrance Island" = "Entrance Island"
-# )
-#
-# vec2 <- unique(final$fe_fishing_ground_comment)
-# unique(vec2)
-
 
 # QA/QC dates --------------------------------
 sets <- final3
@@ -284,6 +226,36 @@ d <- sets |>
 
 saveRDS(d, "output/dogfishs_allsets_allspecies_clean.rds")
 
+
+# MERGE SETS AND CATCH COUNTS ---------------------------------------------
+sets <- readRDS("output/dogfishs_allsets_allspecies_clean.rds")
+count <- readRDS("output/dogfish_counts.rds")
+
+names(sets) <- tolower(names(sets))
+names(samples) <- tolower(names(samples))
+names(count) <- tolower(names(count))
+
+sets <- sets |> rename("FEI" = "fishing_event_id")
+count <- count |> rename("FEI" = "fishing_event_id")
+
+regsurveys <- sets |>
+  filter(survey_series_id %in% c(93, 92)) |>
+  inner_join(count)
+
+compsurveys <- sets |>
+  filter(survey_series_id == 48) |>
+  inner_join(count) |>
+  select(-"fishing_event_id", "fe_parent_event_id")
+
+final <- rbind(regsurveys, compsurveys)
+unique(final$year)
+
+ggplot(final, aes(species_code, catch_count)) +
+  geom_point() +
+  facet_wrap(~year)
+saveRDS(final, "output/dogfishs_allsets_allspecies_counts.rds")
+
+
 # MERGE SETS AND SAMPLES ---------------------------------------------------------
 sets <- readRDS("output/dogfishs_allsets_allspecies_clean.rds")
 samples <- readRDS("output/dogfish_samples.rds")
@@ -310,7 +282,29 @@ saveRDS(final, "output/dogfishs_allsets_allspecies.rds")
 
 
 
-# SUMMARY FIGURES ---------------------------------------------------------
+# SUMMARY FIGURES - SETS --------------------------------------------------
+sets <- readRDS("output/dogfishs_allsets_allspecies_counts.rds")
+
+df <- filter(sets, species_code == "442")
+df <- filter(sets, species_code == "044" & site_gis == "Ajax Exeter")
+
+df <- sets |> 
+  filter(species_code == "442" ) |> 
+  group_by(year, grouping_depth_id) |> 
+  summarize(count = sum(catch_count))
+
+glimpse(df)
+ggplot(df, aes(grouping_depth_id, catch_count, group = year, colour = year)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ site_gis )
+
+ggplot(df, aes(grouping_depth_id, catch_count, group = site_gis, colour = site_gis)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ year )
+
+# SUMMARY FIGURES - samples ---------------------------------------------------------
 d <- readRDS("output/dogfishs_allsets_allspecies.rds")
 
 d |>
@@ -319,18 +313,18 @@ d |>
   theme_classic()
 
 d |>
-  filter(species_code == "027") |> 
+  filter(species_code == "027") |>
   filter(specimen_sex_code %in% c(1, 2)) |>
   ggplot() +
   geom_jitter(aes((grouping_depth_id), total_length,
-                   colour = as.factor(hooksize_desc)
+    colour = as.factor(hooksize_desc)
   )) +
   # geom_boxplot(position = position_dodge(1)) +
   facet_wrap(~ specimen_sex_code + year, nrow = 2) +
   theme_classic()
 
 d |>
-  filter(species_code == "044") |> 
+  filter(species_code == "044") |>
   filter(specimen_sex_code %in% c(1, 2)) |>
   ggplot() +
   geom_boxplot(aes((grouping_depth_id), total_length,
@@ -341,7 +335,7 @@ d |>
   theme_classic()
 
 d |>
-  filter(species_code == "044") |> 
+  filter(species_code == "044") |>
   filter(specimen_sex_code %in% c(1, 2)) |>
   ggplot() +
   geom_boxplot(aes(as.factor(year), total_length,
