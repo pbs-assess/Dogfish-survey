@@ -30,6 +30,7 @@ SK.HOOK_DESC, SK.HOOKSIZE_DESC,
 YEAR(TR.TRIP_START_DATE) AS YEAR,
 FE.FISHING_EVENT_ID,
 FE.FE_PARENT_EVENT_ID,
+LGLSP_HOOK_COUNT,
 FE_START_LATTITUDE_DEGREE + FE_START_LATTITUDE_MINUTE / 60 AS LATITUDE,
 -(FE_START_LONGITUDE_DEGREE + FE_START_LONGITUDE_MINUTE / 60) AS LONGITUDE,
 FE_END_DEPLOYMENT_TIME, FE_BEGIN_RETRIEVAL_TIME, FE.GROUPING_CODE, GROUPING_DESC, GROUPING_DEPTH_ID,
@@ -39,7 +40,7 @@ FE_BEGINNING_BOTTOM_DEPTH AS DEPTH_M,
 FE.TRIP_ID
 FROM FISHING_EVENT FE
 LEFT JOIN (
-  SELECT TRIP_ID, FE.FISHING_EVENT_ID, FE_MAJOR_LEVEL_ID, FE_SUB_LEVEL_ID, H.HOOK_DESC, HSZ.HOOKSIZE_DESC
+  SELECT TRIP_ID, FE.FISHING_EVENT_ID, LLSP.LGLSP_HOOK_COUNT, FE_MAJOR_LEVEL_ID, FE_SUB_LEVEL_ID, H.HOOK_DESC, HSZ.HOOKSIZE_DESC
   FROM FISHING_EVENT FE
   INNER JOIN LONGLINE_SPECS LLSP ON LLSP.FISHING_EVENT_ID = FE.FISHING_EVENT_ID
   LEFT JOIN HOOK H ON H.HOOK_CODE = LLSP.HOOK_CODE
@@ -52,7 +53,9 @@ INNER JOIN SURVEY_SERIES SS ON SS.SURVEY_SERIES_ID = S.SURVEY_SERIES_ID
 LEFT JOIN GROUPING G ON G.GROUPING_CODE = FE.GROUPING_CODE
 WHERE S.SURVEY_SERIES_ID IN (48, 76, 92, 93)
 AND FE.FE_MAJOR_LEVEL_ID < 1000 AND FE_PARENT_EVENT_ID IS NULL
-ORDER BY YEAR, TRIP_ID, FE_MAJOR_LEVEL_ID, FE_SUB_LEVEL_ID")
+ORDER BY YEAR, TRIP_ID, FE_MAJOR_LEVEL_ID,  FE_SUB_LEVEL_ID")
+#what is this for?
+#AND FE.FE_MAJOR_LEVEL_ID < 1000 AND FE_PARENT_EVENT_ID IS NULL
 
 
 dsurvey_bio <- gfdata::run_sql("GFBioSQL", "SELECT
@@ -84,6 +87,21 @@ INNER JOIN GFBioSQL.dbo.SPECIES S ON S.SPECIES_CODE = B21.SPECIES_CODE
 WHERE SR.SURVEY_SERIES_ID IN (48, 76, 92, 93)
 ORDER BY B21.TRIP_ID, B21.FE_MAJOR_LEVEL_ID, B22.SPECIMEN_ID")
 
+#all 2004, 2022 comparison work should have a parent_event_id
+dsurvey_bio |> 
+  filter(YEAR %in% c(2004, 2022)) |> 
+  group_by(FISHING_EVENT_ID, YEAR) |> 
+  distinct(FISHING_EVENT_ID, .keep_all = TRUE) |> 
+  reframe(sum = is.na(FE_PARENT_EVENT_ID)) |> 
+  filter(sum == TRUE)
+#all other years do not have a parent event id
+dsurvey_bio |> 
+  filter(!(YEAR %in% c(2004, 2022))) |> 
+  group_by(FISHING_EVENT_ID, YEAR) |> 
+  distinct(FISHING_EVENT_ID, .keep_all = TRUE) |> 
+  reframe(sum = is.na(FE_PARENT_EVENT_ID)) |> 
+  filter(sum == FALSE)
+
 # note yelloweye rockfish not sampled, therefore not entries.
 x <- filter(dsurvey_bio, YEAR == 1986)
 unique(x$SPECIES_COMMON_NAME)
@@ -91,11 +109,14 @@ unique(x$SPECIES_COMMON_NAME)
 # this has the catch count per species
 catchcount <- gfdata::run_sql("GFBioSQL", "SELECT
 FEC.FISHING_EVENT_ID,
+FE.FE_PARENT_EVENT_ID,
+FE.FE_SUB_LEVEL_ID,
 C.SPECIES_CODE,
 SP.SPECIES_COMMON_NAME,
 SP.SPECIES_SCIENCE_NAME,
 SUM(CATCH_COUNT) CATCH_COUNT
 FROM FISHING_EVENT_CATCH FEC
+INNER JOIN FISHING_EVENT FE ON FE.FISHING_EVENT_ID = FEC.FISHING_EVENT_ID
 INNER JOIN CATCH C ON C.CATCH_ID = FEC.CATCH_ID
 INNER JOIN TRIP_SURVEY TS ON TS.TRIP_ID = FEC.TRIP_ID
 INNER JOIN SURVEY S ON S.SURVEY_ID = TS.SURVEY_ID
@@ -103,6 +124,8 @@ INNER JOIN GFBioSQL.dbo.SPECIES SP ON SP.SPECIES_CODE = C.SPECIES_CODE
 WHERE SURVEY_SERIES_ID IN (48, 76, 92, 93)
 GROUP BY FEC.TRIP_ID,
 FEC.FISHING_EVENT_ID,
+FE.FE_PARENT_EVENT_ID,
+FE.FE_SUB_LEVEL_ID,
 C.SPECIES_CODE,
 SP.SPECIES_COMMON_NAME,
 SP.SPECIES_SCIENCE_NAME
@@ -185,9 +208,24 @@ sets <- sets |>
       )
     )
   ))
+
+sets <- sets |>
+  mutate(grouping_depth_id = ifelse(grouping_desc == "SoG Dogfish 0 - 55 m", 1,
+                                ifelse(grouping_desc == "SoG Dogfish 56 - 110 m", 2, 
+                                       ifelse(grouping_desc == "SoG Dogfish 111 - 165 m", 3, 
+                                              ifelse(grouping_desc == "SoG Dogfish 166 - 220 m", 4, 
+                                                     ifelse(grouping_desc == "SoG Dogfish > 200 m", 5,
+                                                            NA
+                                                     )
+                                              )
+                                       )
+                                )
+  ))
 # check
 sets |>
   filter(grouping_desc == "SoG Dogfish Site")
+unique(sets$grouping_desc)
+unique(sets$grouping_depth_id)
 
 # still NAs - WHY
 test <- sets |>
@@ -224,6 +262,9 @@ d <- sets |>
     soak = hr_diff + min_diff
   )
 
+#some soaks are NA - fix this! 
+d |> 
+  filter(is.na(soak)== TRUE)
 saveRDS(d, "output/dogfishs_allsets_allspecies_clean.rds")
 
 
@@ -235,26 +276,77 @@ names(sets) <- tolower(names(sets))
 names(samples) <- tolower(names(samples))
 names(count) <- tolower(names(count))
 
-sets <- sets |> rename("FEI" = "fishing_event_id")
-count <- count |> rename("FEI" = "fishing_event_id")
-
 regsurveys <- sets |>
   filter(survey_series_id %in% c(93, 92)) |>
-  inner_join(count)
+  left_join(count) 
+unique(regsurveys$year)
 
 compsurveys <- sets |>
-  filter(survey_series_id == 48) |>
-  inner_join(count) |>
-  select(-"fishing_event_id", "fe_parent_event_id")
+  filter(survey_series_id == 48 & year %in% c(2004, 2022)) |>
+  left_join(count, by = c("fishing_event_id" = "fe_parent_event_id", "fe_sub_level_id" = "fe_sub_level_id")) |> 
+  select(-fishing_event_id.y)
+unique(compsurveys$year)
 
-final <- rbind(regsurveys, compsurveys)
+compsurveys2019 <- sets |>
+  filter(survey_series_id == 48 & year == 2019) |>
+  left_join(count) 
+unique(compsurveys2019$year)
+
+final <- rbind(regsurveys, compsurveys, compsurveys2019)
 unique(final$year)
 
 ggplot(final, aes(species_code, catch_count)) +
   geom_point() +
   facet_wrap(~year)
+ggplot(final, aes(species_code, lglsp_hook_count)) +
+  geom_point() +
+  facet_wrap(~year)
+
 saveRDS(final, "output/dogfishs_allsets_allspecies_counts.rds")
 
+unique(final$site_gis)
+
+final |> 
+  filter(species_code == "442") |> 
+  filter(is.na(grouping_depth_id) != TRUE) |> 
+  group_by(site_gis, grouping_depth_id) |> 
+  reframe(yelloweye_catch_count = sum(catch_count), yelloweye_mean_catchcount = mean(catch_count)) |> 
+  filter(grouping_depth_id == 2)
+
+final |> 
+  filter(species_code == "442") |> 
+  filter(is.na(grouping_depth_id) != TRUE) |> 
+  group_by(site_gis, grouping_depth_id, year) |> 
+  reframe(yelloweye_catch_count = sum(catch_count)) |> 
+  filter(grouping_depth_id == 2)
+
+final |> 
+  filter(species_code == "442") |> 
+  filter(is.na(grouping_depth_id) != TRUE) |> 
+  group_by(site_gis, grouping_depth_id) |> 
+  reframe(sum = sum(catch_count)) |> 
+  ggplot() +
+  geom_point(aes(grouping_depth_id, sum, group = site_gis, colour = site_gis)) +
+  geom_line(aes(grouping_depth_id, sum, group = site_gis, colour = site_gis)) + 
+  facet_wrap(~site_gis)
+  
+#start here the grouping id has NAs
+final |> 
+  filter(species_code == "044") |> 
+  filter(year == 2019) |> 
+  filter(is.na(grouping_depth_id) != TRUE) |> 
+  group_by(hooksize_desc, grouping_depth_id, year) |> 
+  reframe(sum = sum(catch_count), 
+          sumeffort = sum(lglsp_hook_count * soak), 
+          sumcpue = sum/sumeffort) |> 
+  drop_na(hooksize_desc) |> 
+  ggplot() +
+  geom_point(aes(grouping_depth_id, sumcpue, group = as.factor(hooksize_desc), 
+                 colour = as.factor(hooksize_desc), size = 2)) + 
+  geom_line(aes(grouping_depth_id, sumcpue, group = as.factor(hooksize_desc), 
+                 colour = as.factor(hooksize_desc), size = 1)) + 
+  facet_wrap(~year, scales = "free_y")
+  
 
 # MERGE SETS AND SAMPLES ---------------------------------------------------------
 sets <- readRDS("output/dogfishs_allsets_allspecies_clean.rds")
@@ -262,23 +354,29 @@ samples <- readRDS("output/dogfish_samples.rds")
 
 names(sets) <- tolower(names(sets))
 names(samples) <- tolower(names(samples))
-sets <- sets |> rename("FEI" = "fishing_event_id")
 
 regsurveys <- samples |>
   filter(survey_series_id %in% c(93, 92)) |>
-  rename("FEI" = "fishing_event_id") |>
   inner_join(sets)
 
 compsurveys <- samples |>
-  filter(survey_series_id == 48) |>
-  rename("FEI" = "fe_parent_event_id") |>
-  inner_join(sets) |>
-  select(-"fishing_event_id", "fe_parent_event_id")
+  filter(survey_series_id == 48 & year != 2019) |>
+  left_join(sets, by = c("fe_parent_event_id" = "fishing_event_id", 
+                         "fe_sub_level_id" = "fe_sub_level_id", 
+                         "survey_series_id" = "survey_series_id", 
+                         "year" = "year", 
+                         "trip_id" = "trip_id", 
+                         "fe_major_level_id" = "fe_major_level_id")) |> 
+  select(-"fe_parent_event_id.y")
 
-final <- rbind(regsurveys, compsurveys)
+compsurveys2019 <- samples |>
+  filter(survey_series_id == 48 & year == 2019) |>
+  left_join(sets) 
+
+final <- rbind(regsurveys, compsurveys, compsurveys2019)
 unique(final$grouping_desc)
 
-saveRDS(final, "output/dogfishs_allsets_allspecies.rds")
+saveRDS(final, "output/dogfishs_allsets_allsamples.rds")
 
 
 
@@ -286,13 +384,14 @@ saveRDS(final, "output/dogfishs_allsets_allspecies.rds")
 sets <- readRDS("output/dogfishs_allsets_allspecies_counts.rds")
 
 df <- filter(sets, species_code == "442")
-df <- filter(sets, species_code == "044" & site_gis == "Ajax Exeter")
+df <- filter(sets, species_code == "044")
 
-df <- sets |> 
+x <- sets |> 
   filter(species_code == "442" ) |> 
   group_by(year, grouping_depth_id) |> 
   summarize(count = sum(catch_count))
 
+df <- df |> mutate(cpue = catch_count/(lglsp_hook_count * soak) )
 glimpse(df)
 ggplot(df, aes(grouping_depth_id, catch_count, group = year, colour = year)) +
   geom_point() +
@@ -304,8 +403,28 @@ ggplot(df, aes(grouping_depth_id, catch_count, group = site_gis, colour = site_g
   geom_line() +
   facet_wrap(~ year )
 
+ggplot(df, aes(grouping_depth_id, catch_count, group = hooksize_desc, colour = hooksize_desc)) +
+  geom_jitter() +
+  facet_wrap(~ year, scales = "free_y")
+
+df |> 
+  group_by(grouping_depth_id, year, hooksize_desc) |>
+  reframe(sum = sum(catch_count)/sum(lglsp_hook_count)) |> 
+  ggplot(aes(grouping_depth_id, sum, group = hooksize_desc, colour = hooksize_desc)) +
+  geom_point() +
+  geom_line() + 
+  facet_wrap(~ year, scales = "free_y")
+
+df |> 
+  group_by(grouping_depth_id, year, hooksize_desc) |>
+  reframe(sum = sum(catch_count)) |> 
+  ggplot(aes(grouping_depth_id, sum, group = hooksize_desc, colour = hooksize_desc)) +
+  geom_point() +
+  geom_line() + 
+  facet_wrap(~ year, scales = "free_y")
+
 # SUMMARY FIGURES - samples ---------------------------------------------------------
-d <- readRDS("output/dogfishs_allsets_allspecies.rds")
+d <- readRDS("output/dogfishs_allsets_allsamples.rds")
 
 d |>
   ggplot() +
@@ -316,8 +435,11 @@ d |>
   filter(species_code == "027") |>
   filter(specimen_sex_code %in% c(1, 2)) |>
   ggplot() +
-  geom_jitter(aes((grouping_depth_id), total_length,
+  geom_point(aes((grouping_depth_id), total_length,
     colour = as.factor(hooksize_desc)
+  )) +
+  geom_line(aes((grouping_depth_id), total_length,
+                  colour = as.factor(hooksize_desc)
   )) +
   # geom_boxplot(position = position_dodge(1)) +
   facet_wrap(~ specimen_sex_code + year, nrow = 2) +
@@ -342,5 +464,5 @@ d |>
     colour = as.factor(hooksize_desc)
   )) +
   # geom_boxplot(position = position_dodge(1)) +
-  facet_wrap(~ grouping_desc + specimen_sex_code, nrow = 2) +
+  facet_wrap(~ specimen_sex_code + grouping_depth_id, nrow = 2) +
   theme_classic()
