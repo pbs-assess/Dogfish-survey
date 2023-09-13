@@ -149,7 +149,7 @@ names(sets) <- tolower(names(sets))
 
 # FIX LOCATION NAMES
 # overlay data locations with polygons
-sites <- st_read("C:/Dogfish surveys 2023/dogfish sites shp", "dogfish_polygons_noproj2")
+sites <- st_read("data", "dogfish_polygons_noproj2")
 plot(st_geometry(sites), col = "red")
 site_name <- unique(sites$site_name)
 df <- data.frame(cbind(site_name, site_gis = c(
