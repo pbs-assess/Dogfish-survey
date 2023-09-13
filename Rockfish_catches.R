@@ -32,14 +32,15 @@ theme_set(ggsidekick::theme_sleek())
 #pull from Dogfish_data_pull.R
 
 d <- readRDS("output/dogfishs_allsets_allspecies.rds")
-
+dd <- filter(d, year == 1986)
+unique(dd$species_common_name)
 
 # Catch of Rockfish by depth by year --------------------------------------
-d <- left_join(d, scodes2)
+#d <- left_join(d, scodes2)
 # drop the species without codes ###COME BACK TO  THIS  THOUGH
 
 # filter for rockfishes
-drock <- filter(d, grepl("rockfish", species_name, ignore.case = TRUE))
+drock <- filter(d, grepl("ROCKFISH", species_common_name, ignore.case = TRUE))
 saveRDS(drock, "output/dogfishsql_rockfish.rds")
 
 

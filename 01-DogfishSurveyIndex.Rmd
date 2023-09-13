@@ -54,7 +54,7 @@ Details of the comparative surveys. 2019 HBLL with DOG circle hooks run at x sta
 ```{r data, eval = TRUE}
 x <- get_ssids()
 x$SURVEY_SERIES_DESC[x$SURVEY_SERIES_ID %in% c(48, 76, 92, 93)]
-# sets <- get_survey_sets(species = "north pacific spiny dogfish", ssid = c(48, 76, 92, 93))
+sets <- get_survey_sets(species = "north pacific spiny dogfish", ssid = c(48, 76, 92, 93))
 # saveRDS(sets,  "C:/Dogfish surveys 2022/output/dogfish_sets.rds")
 sets <- readRDS("output/dogfish_sets.rds")
 

@@ -7,6 +7,9 @@
 # SURVEY_SERIES_ID == 92) # 1986, 1989 survey
 
 # note yelloweye rockfish were not sampled in earlier years. 1986/1989 maybe not 2004?
+# note 2004 comparison work had two gear types per set
+# note 2019 comparison work dropped separate lines per gear type
+# note 2022 comparison work has two gear types per set
 
 # library -----------------------------------------------------------------
 library(sf)
@@ -245,7 +248,7 @@ sets |>
   distinct(site_gis) |>
   tally()
 
-# CALCULATE SOAK TIME -----------------------------------------------------
+# Calculate and QA/QC soak time -----------------------------------------------------
 glimpse(sets$fe_end_deployment_time)
 d <- sets |>
   mutate(
