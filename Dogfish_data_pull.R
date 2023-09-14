@@ -13,14 +13,11 @@
 
 # library -----------------------------------------------------------------
 library(sf)
-library(purrr)
 library(dplyr)
 library(ggplot2)
 library(tidyr)
-library(sf)
-library(sdmTMB)
 library(here)
-library(gfdata)
+library(sp)
 
 
 # Pull dogfish survey samples and sets --------------------------------------------------------------
@@ -140,7 +137,7 @@ saveRDS(catchcount, "output/dogfish_counts.rds")
 saveRDS(info, "output/dogfish_sets.rds")
 
 
-# QA/QC data -------------------------------------------------------------
+# QA/QC location names -------------------------------------------------------------
 samples <- readRDS("output/dogfish_samples.rds")
 sets <- readRDS("output/dogfish_sets.rds")
 
@@ -190,13 +187,11 @@ final3 <- rbind(add, ptsint)
 ggplot(final3, aes(longitude, latitude, colour = site_gis, group = fe_fishing_ground_comment)) +
   geom_point()
 
-# QA/QC dates --------------------------------
+# QA/QC dates and depth--------------------------------
 sets <- final3
-# check depths
-unique(sets$grouping_desc)
 
-sets |>
-  filter(grouping_desc == "SoG Dogfish Site")
+# check depths
+unique(sets$grouping_desc) #NAs and a 'SOG Dogfish Site'
 
 # fix
 sets <- sets |>
@@ -224,17 +219,15 @@ sets <- sets |>
                                        )
                                 )
   ))
+
 # check
 sets |>
-  filter(grouping_desc == "SoG Dogfish Site")
-unique(sets$grouping_desc)
-unique(sets$grouping_depth_id)
+  filter(grouping_desc == "SoG Dogfish Site") #none, fixed now
 
 # still NAs - WHY
-test <- sets |>
+sets |>
   filter(is.na(grouping_desc) == TRUE) # comment says missing depth in
-unique(test$fishing_event_id) # comment says missing depth in
-sets <- filter(sets, fishing_event_id != 3420654)
+sets <- filter(sets, is.na(grouping_desc) != TRUE)
 
 sets |>
   group_by(year, site_gis) |>
@@ -252,7 +245,6 @@ sets |>
 glimpse(sets$fe_end_deployment_time)
 d <- sets |>
   mutate(
-    # deploy = as.Date(fe_end_deployment_time, format = "%Y-%m-%d hh:mm:ss"),
     deployhr = lubridate::hour(fe_end_deployment_time),
     deploymin = lubridate::minute(fe_end_deployment_time),
     retrive = as.Date(fe_begin_retrieval_time, format = "%Y-%m-%d h:m:s"),
@@ -268,6 +260,13 @@ d <- sets |>
 #some soaks are NA - fix this! 
 d |> 
   filter(is.na(soak)== TRUE)
+
+d |> 
+  filter(is.na(soak)== TRUE) |> 
+  distinct(fishing_event_id, .keep_all = TRUE) |> 
+  tally() #64 fishing events are missing soak times as the deployment time wasnt recorded
+#most are in 2004 when fishing times were between 1.5 - 3 hours. 
+
 saveRDS(d, "output/dogfishs_allsets_allspecies_clean.rds")
 
 
@@ -307,8 +306,11 @@ ggplot(final, aes(species_code, lglsp_hook_count)) +
 
 saveRDS(final, "output/dogfishs_allsets_allspecies_counts.rds")
 
-unique(final$site_gis)
 
+# summary tables and figures for sets and counts --------------------------
+final <- readRDS("output/dogfishs_allsets_allspecies_counts.rds")
+
+#how many rockfish captured at depth two across sites?
 final |> 
   filter(species_code == "442") |> 
   filter(is.na(grouping_depth_id) != TRUE) |> 
@@ -332,24 +334,37 @@ final |>
   geom_point(aes(grouping_depth_id, sum, group = site_gis, colour = site_gis)) +
   geom_line(aes(grouping_depth_id, sum, group = site_gis, colour = site_gis)) + 
   facet_wrap(~site_gis)
-  
-#start here the grouping id has NAs
+
+#2019 hook comparison catch and effort results
 final |> 
   filter(species_code == "044") |> 
-  filter(year == 2019) |> 
+  filter(year == 2019 & survey_series_id ==48) |> 
   filter(is.na(grouping_depth_id) != TRUE) |> 
-  group_by(hooksize_desc, grouping_depth_id, year) |> 
+  group_by(hooksize_desc, grouping_depth_id) |> 
   reframe(sum = sum(catch_count), 
           sumeffort = sum(lglsp_hook_count * soak), 
           sumcpue = sum/sumeffort) |> 
   drop_na(hooksize_desc) |> 
   ggplot() +
+  geom_point(aes(grouping_depth_id, sum, group = as.factor(hooksize_desc), 
+                 colour = as.factor(hooksize_desc)), size = 2) + 
+  geom_line(aes(grouping_depth_id, sum, group = as.factor(hooksize_desc), 
+                colour = as.factor(hooksize_desc)), size = 1) 
+
+final |> 
+  filter(species_code == "044") |> 
+  filter(year == 2019 & survey_series_id ==48) |> 
+  filter(is.na(grouping_depth_id) != TRUE) |> 
+  group_by(hooksize_desc, grouping_depth_id, fishing_event_id) |> 
+  reframe(cpue = sum(catch_count/sum(lglsp_hook_count * soak))) |> 
+  group_by(hooksize_desc, grouping_depth_id) |> 
+  reframe(sumcpue = sum(cpue)) |> 
+  drop_na(hooksize_desc) |> 
+  ggplot() +
   geom_point(aes(grouping_depth_id, sumcpue, group = as.factor(hooksize_desc), 
-                 colour = as.factor(hooksize_desc), size = 2)) + 
+                 colour = as.factor(hooksize_desc)), size = 2) + 
   geom_line(aes(grouping_depth_id, sumcpue, group = as.factor(hooksize_desc), 
-                 colour = as.factor(hooksize_desc), size = 1)) + 
-  facet_wrap(~year, scales = "free_y")
-  
+                colour = as.factor(hooksize_desc)), size = 1) 
 
 # MERGE SETS AND SAMPLES ---------------------------------------------------------
 sets <- readRDS("output/dogfishs_allsets_allspecies_clean.rds")
@@ -389,10 +404,11 @@ sets <- readRDS("output/dogfishs_allsets_allspecies_counts.rds")
 df <- filter(sets, species_code == "442")
 df <- filter(sets, species_code == "044")
 
-x <- sets |> 
+sets |> 
   filter(species_code == "442" ) |> 
   group_by(year, grouping_depth_id) |> 
-  summarize(count = sum(catch_count))
+  summarize(count = sum(catch_count)) |> 
+  print(n= 35)
 
 df <- df |> mutate(cpue = catch_count/(lglsp_hook_count * soak) )
 glimpse(df)
@@ -412,7 +428,8 @@ ggplot(df, aes(grouping_depth_id, catch_count, group = hooksize_desc, colour = h
 
 df |> 
   group_by(grouping_depth_id, year, hooksize_desc) |>
-  reframe(sum = sum(catch_count)/sum(lglsp_hook_count)) |> 
+  drop_na(soak) |> 
+  reframe(sum = sum(catch_count)/sum(lglsp_hook_count*soak)) |> 
   ggplot(aes(grouping_depth_id, sum, group = hooksize_desc, colour = hooksize_desc)) +
   geom_point() +
   geom_line() + 
